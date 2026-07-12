@@ -1,0 +1,17 @@
+# project3-hailcast-ops/.gitignore
+
+# 자격증명 (git 밖 공유 원칙 — 절대 커밋 금지)
+.dockerhub_token
+.docker_config/
+.env
+*.csv
+
+# terraform 로컬 산출물
+.terraform/
+*.tfstate*
+*.pem
+
+# 기타
+__pycache__/
+.DS_Store
+ 
