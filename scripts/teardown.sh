@@ -24,7 +24,8 @@ MANIFESTS_DIR="${MANIFESTS_DIR:-../project3-hailcast-manifests}"
 
 # ★ 공용 프로젝트 계정(tptp) 12자리 ID. 환경변수로 덮어쓸 수 있음.
 #   계정 ID 는 시크릿(키·비번)이 아니라서 기본값으로 박아도 보안규약에 안 걸린다.
-EXPECTED_ACCOUNT="${EXPECTED_ACCOUNT:-TODO_공용계정_12자리_ID}"
+#   ⚠️ 앞자리 0 → 반드시 문자열. 숫자로 비교하면 0 이 날아가 11자리가 되어 대조가 항상 실패한다(지금은 문자열 비교라 OK).
+EXPECTED_ACCOUNT="${EXPECTED_ACCOUNT:-013623161818}"
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 info()  { echo -e "${BLUE}[TEARDOWN]${NC} $1"; }
