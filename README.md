@@ -58,10 +58,47 @@ make check
 ## 자격증명 원칙 (중요)
 
 - **git·문서·대화에 키를 절대 두지 않습니다.** 값은 각자 서버 로컬에만 저장됩니다.
-  - AWS: `aws configure` → `~/.aws` (팀 공용 계정 **tptp**)
+  - AWS: `aws configure --profile hailcast` → `~/.aws` (팀 공용 계정 **tptp**)
   - Docker Hub: `.dockerhub_token`(chmod 600, git 밖) (팀 공용 계정 **hailscale**)
 - `.gitignore`가 `.dockerhub_token` · `.docker_config/` · `*.csv` · `.terraform/` · `*.tfstate*`를 제외합니다.
 - EKS 권한: 공용 tptp가 클러스터 생성자라 자동 admin(`bootstrap_cluster_creator_admin_permissions=true`). 개인 IAM 추가 필요 시 infra의 Access Entry로 등록.
+
+### AWS 프로필 분리 + 계정 가드 (왜)
+
+공용 키를 `[default]`에 두지 않고 **`hailcast` 프로필**에 담습니다. 이유가 둘입니다.
+
+1. **공용 키가 default에 앉으면** 그 서버의 모든 `aws`·`terraform` 기본 계정이 공용 계정이 됩니다. 팀원이 강의 실습으로 만든 EC2·S3가 **공용 계정에 생기고**, Terraform이 만든 게 아니라 `ManagedBy=terraform` 태그가 없어 **비용 집계에서 누락된 채 과금**됩니다.
+2. **개인 키가 default에 남아 있으면** 예전 `setup.sh`는 그냥 통과시켰습니다. 계정 ID를 **출력만** 하고 tptp인지 대조하지 않았기 때문입니다. 그래서 개인 계정에 앉은 채로 `setup`도 `check`도 **전부 초록불**이 떴습니다.
+
+그래서 두 가지를 넣었습니다.
+
+**① 프로필 분리** — `Makefile`이 `AWS_PROFILE=hailcast`를 export합니다. `make -C`로 위임되는 각 레포의 terraform도 이 프로필을 씁니다. **개인 `[default]`는 건드리지 않습니다.**
+
+**② 계정 가드** — `sts get-caller-identity` 결과를 **tptp 계정 ID와 대조**합니다. 상수와 가드 함수는 `scripts/_lib.sh` **한 곳**에만 있습니다.
+
+| 어디서 | 계정이 tptp가 아니면 |
+|---|---|
+| `make setup` | **즉시 중단** |
+| `make check` | ❌ 빨간불 + 마지막에 **`exit 1`** (나머지 점검은 마저 보여줌) |
+| `make infra-init` · `plan` · `apply` · `destroy` | **즉시 중단** (`guard-account` 선행) |
+| `make kubeconfig` · `app-build-push` · `deploy` | **즉시 중단** (`guard-account` 선행) |
+| `make destroy-all` | **즉시 중단** (`teardown.sh` 가드) |
+| `make infra-fmt` | 가드 없음 — **자격증명이 아예 필요 없는 작업**이라 일부러 뺐습니다 |
+
+**`make infra-apply`에 가드가 왜 필요한가.** `teardown.sh`가 destroy를 막아도 `make infra-destroy`는 그 스크립트를 거치지 않고 곧장 terraform으로 갑니다. 가드를 `setup`·`check`·`teardown`에만 두면 **정작 돈이 나가고 자원이 파괴되는 경로가 비어 있게 됩니다.**
+
+### 터미널에서 직접 쓸 때
+
+```bash
+export AWS_PROFILE=hailcast
+aws sts get-caller-identity     # 계정이 tptp 인지 눈으로 확인
+```
+
+⚠️ **환경변수 자격증명(`AWS_ACCESS_KEY_ID` 등)은 프로필보다 우선합니다.** 셸에 남아 있으면 프로필을 아무리 잘 잡아도 그 키가 쓰입니다. `setup.sh`가 감지해 경고하지만, 미리 지워두는 게 낫습니다.
+
+```bash
+unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+```
 
 ### Docker Hub 계정 격리 (왜 / 되돌리는 법)
 
@@ -126,4 +163,5 @@ make destroy-all          # ① manifest(K8s·ALB) → ② infra(terraform destr
 |---|---|---|
 | `CONFIRM=yes` | 실제 destroy 실행 (없으면 infra 는 미리보기) | ops `destroy-all` 이 infra 에 주입 |
 | `FORCE=yes` | ALB 경고 무시하고 강행 | **안 함 (사람이 직접 지정)** |
-| `EXPECTED_ACCOUNT` | 공용 계정 ID 검증 | 스크립트 상단 상수(기본값) |
+| `TPTP_ACCOUNT_ID` | 공용 계정 ID 검증 | `scripts/_lib.sh` 상수 (한 곳에만 둔다) |
+| `AWS_PROFILE` | 공용 계정 프로필 | `Makefile` 이 `hailcast` 로 export |
