@@ -47,6 +47,7 @@
       `kubectl get ingress -A` / `kubectl get svc -A | grep -i loadbalancer`  → **비어 있어야 정상.**
 - [ ] AWS 콘솔 EC2 → Load Balancers 에서 `k8s-...` ALB 없음 확인.
       ※ 여기가 안 비면 infra 단계의 ALB 가드가 destroy 를 막는다(정상 동작).
+      ※ ALB 조회 자체가 실패해도(자격·권한·리전) 안전상 중단한다.
 
 ## 2. infra 정리 (terraform destroy)
 
