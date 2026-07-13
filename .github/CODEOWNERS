@@ -1,0 +1,44 @@
+# =============================================================
+# CODEOWNERS — teardown 계열 파일에 자동 리뷰 요청
+#
+# 무엇을 하나 : 아래 경로가 바뀐 PR 이 열리면 GitHub 이 자동으로
+#               이미선(@mshjgr)을 리뷰어로 지정한다.
+#
+# ⚠️ 무엇을 못 하나 : 머지를 '막지는' 못한다.
+#    막으려면 main ruleset 에서 Require review from Code Owners 를 켜야 하는데,
+#    ops 는 branch protection 을 안 걸기로 했다(팀 결정).
+#    즉 이 파일은 게이트가 아니라 '놓치지 않게 하는 알림'이다.
+#
+# ⚠️ 두 가지 함정 (GitHub 공식 문서 확인)
+#    - CODEOWNERS 는 PR 의 base 브랜치(main)에 있어야 동작한다.
+#      → 이 파일을 추가하는 PR 자체에는 리뷰 요청이 안 뜬다. 머지된 뒤부터 유효하다.
+#    - GitHub 은 PR 작성자 본인에게는 리뷰 요청을 보내지 않는다.
+#      → 이미선이 직접 여는 PR 에는 안 뜬다. 실효 대상은 '팀장이 여는 teardown PR' 이다.
+#
+# ⚠️ 한글 경로(/teardown_체크리스트.md)는 문법 검증(GitHub codeowners/errors API)은 통과했으나,
+#    공식 문서가 non-ASCII 경로 매칭을 명시적으로 보증하지 않는다.
+#    → 머지 후 그 파일만 건드리는 PR 로 리뷰어가 실제로 붙는지 1회 확인할 것.
+#      안 붙으면 파일명을 ASCII 로 바꾸는 게 근본 해결이다.
+#
+# 왜 teardown 만 : ops 는 팀원 전원 서버에서 실행되고 AWS 를 통째로 지운다.
+#    실행 반경이 다른 레포보다 크다. 전체를 승인 필수로 만들면 속도가 죽으니
+#    '삭제를 수행하는 파일'에만 리뷰를 건다.
+#
+# 리뷰어가 볼 것 (docs/비용관리.md §5)
+#   1. 삭제 순서 — K8s 리소스 먼저, terraform 나중.
+#      거꾸로 하면 K8s 가 만든 LB·노드·EBS 가 tfstate 밖에 남아 계속 과금된다.
+#   2. CONFIRM / FORCE 분리 유지 — CONFIRM 은 '진짜 지운다',
+#      FORCE 는 'ALB 경고를 무시한다'. FORCE 를 자동 주입하면 안 된다.
+#   3. 계정 가드 우회 경로가 생기지 않았는지 (scripts/_lib.sh 의 verify_tptp_account).
+#   4. destroy 뒤 고아 자원(EIP·EBS·스냅샷·ENI·LB) 확인 단계가 빠지지 않았는지.
+# =============================================================
+
+# 전체 정리를 지휘하는 스크립트 (manifest → infra → app 순서 통제)
+/scripts/teardown.sh          @mshjgr
+
+# 사람이 눈으로 확인하는 절차서 (스냅샷·Budgets·잔여 리소스)
+/teardown_체크리스트.md        @mshjgr
+
+# 계정 가드 — 잘못된 계정으로 destroy 가 돌면 되돌릴 방법이 없다
+/scripts/_lib.sh              @mshjgr
+/scripts/guard_account.sh     @mshjgr
