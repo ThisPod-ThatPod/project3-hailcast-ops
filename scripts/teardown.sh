@@ -18,14 +18,17 @@
 
 set -u
 
+# ── 공용 상수·계정 가드 (AWS_PROFILE · TPTP_ACCOUNT_ID · verify_tptp_account) ──
+# shellcheck source=scripts/_lib.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
+
 INFRA_DIR="${INFRA_DIR:-../project3-hailcast-infra}"
 APP_DIR="${APP_DIR:-../project3-hailcast-app}"
 MANIFESTS_DIR="${MANIFESTS_DIR:-../project3-hailcast-manifests}"
 
-# ★ 공용 프로젝트 계정(tptp) 12자리 ID. 환경변수로 덮어쓸 수 있음.
-#   계정 ID 는 시크릿(키·비번)이 아니라서 기본값으로 박아도 보안규약에 안 걸린다.
-#   ⚠️ 앞자리 0 → 반드시 문자열. 숫자로 비교하면 0 이 날아가 11자리가 되어 대조가 항상 실패한다(지금은 문자열 비교라 OK).
-EXPECTED_ACCOUNT="${EXPECTED_ACCOUNT:-013623161818}"
+# ※ 공용 계정 ID(TPTP_ACCOUNT_ID)와 검증 함수(verify_tptp_account)는 scripts/_lib.sh 에 있다.
+#   setup·check·teardown·make 가드가 같은 상수를 봐야 해서 한 곳으로 모았다.
+#   스크립트마다 따로 박으면 계정이 바뀔 때 하나만 고치고 나머지가 낡는다.
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 info()  { echo -e "${BLUE}[TEARDOWN]${NC} $1"; }
@@ -38,28 +41,12 @@ ONLY=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --yes|-y) AUTO_YES=true ;;
-        --only)   ONLY="$2"; shift ;;
+        # set -u 라서 인자를 빼먹으면 'unbound variable' 로 터진다 → 뭘 넣어야 하는지 알려준다
+        --only)   ONLY="${2:?--only 뒤에 manifest | infra | app 중 하나가 필요합니다}"; shift ;;
         *) err "알 수 없는 옵션: $1"; exit 1 ;;
     esac
     shift
 done
-
-# ── 계정 검증 가드 : 어떤 destroy 보다 먼저, '올바른 계정' 인지 확인한다 ──
-#   AWS 를 실제로 건드리는 경우(manifest·infra 포함)에만 검사한다.
-#   --only app 은 각자 로컬 도커 청소라 계정과 무관 → 건너뛴다.
-if [ "$ONLY" != "app" ]; then
-    ACTUAL_ACCOUNT=$(aws sts get-caller-identity --query Account --output text) || {
-        err "AWS 자격증명 확인 실패 (자격·네트워크 확인). 중단."; exit 1; }
-    if [ "$EXPECTED_ACCOUNT" = "TODO_공용계정_12자리_ID" ]; then
-        err "EXPECTED_ACCOUNT 가 아직 설정되지 않았습니다. 스크립트 상단에 공용(tptp) 계정 ID 를 넣으세요."
-        exit 1
-    fi
-    if [ "$ACTUAL_ACCOUNT" != "$EXPECTED_ACCOUNT" ]; then
-        err "현재 계정($ACTUAL_ACCOUNT) 이 공용 계정($EXPECTED_ACCOUNT) 이 아닙니다. 중단."
-        exit 1
-    fi
-    ok "계정 확인: $ACTUAL_ACCOUNT (공용 tptp)"
-fi
 
 # 단계 실행 헬퍼: (레포 디렉토리, teardown 스크립트 상대경로, 사람이 읽을 이름)
 run_stage() {
@@ -105,6 +92,24 @@ echo "============================================="
 echo "  hailcast 전체 teardown (지휘자)"
 echo "  순서: manifest → infra → app"
 echo "============================================="
+
+# ── ⭐ 계정 가드 : 지우기 전에 '어느 계정인지' 먼저 대조한다 ──────────────
+# 여기가 이 레포에서 가장 위험한 경로다. 잘못된 계정으로 destroy 가 돌면
+# 되돌릴 방법이 없다. 그래서 확인 프롬프트보다 '먼저' 계정을 막는다.
+# (--only app 은 로컬 도커 청소라 AWS 를 안 건드린다 → 가드 제외)
+if [ "$ONLY" != "app" ]; then
+    rc=0; verify_tptp_account || rc=$?
+    case "$rc" in
+        0) info "계정 확인 : ${CURRENT_ACCOUNT} (tptp) · 프로필 ${AWS_PROFILE}" ;;
+        1) err "공용 계정(tptp)이 아닙니다 → 현재 ${CURRENT_ACCOUNT} / 기대 ${TPTP_ACCOUNT_ID}"
+           err "teardown 을 중단합니다. 다른 계정의 자원을 지울 뻔했습니다."
+           exit 1 ;;
+        2) err "프로필 '${AWS_PROFILE}' 자격증명 없음/만료 → bash scripts/setup.sh"
+           err "teardown 을 중단합니다."
+           exit 1 ;;
+    esac
+fi
+
 warn "시작 전 'teardown_체크리스트.md' 를 확인하셨나요? (스냅샷·Budgets·잔여 리소스)"
 if [ "$AUTO_YES" = false ]; then
     read -rp "  계속하려면 y 입력: " go

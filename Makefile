@@ -14,6 +14,17 @@ INFRA_DIR     ?= ../project3-hailcast-infra
 APP_DIR       ?= ../project3-hailcast-app
 MANIFESTS_DIR ?= ../project3-hailcast-manifests
 
+# ── AWS 프로필 (공용 계정 tptp 전용) ──
+# 공용 키를 [default] 가 아니라 이름 있는 프로필에 둔다 → 팀원의 개인 default 를 건드리지 않는다.
+# export 하므로 make -C 로 위임되는 각 레포의 terraform·aws 도 이 프로필을 그대로 쓴다.
+# 값·이유는 scripts/_lib.sh 참조 (계정 ID 대조 가드도 거기 있다).
+#
+# ⚠️ '?=' 가 아니라 ':=' 다. make 는 환경변수를 '이미 정의된 변수'로 들여오므로,
+#    셸에 AWS_PROFILE=default 가 있으면 '?=' 는 그걸 덮지 않는다(GNU make 매뉴얼 §6.9).
+#    그러면 공용 키가 개인 [default] 에 저장되는, 이 가드가 막으려던 사고가 그대로 난다.
+AWS_PROFILE := hailcast
+export AWS_PROFILE
+
 # ── EKS 접속 상수 ──
 CLUSTER_NAME ?= hailcast-dev-eks
 AWS_REGION   ?= ap-northeast-2
@@ -21,7 +32,7 @@ AWS_REGION   ?= ap-northeast-2
 # ── GitHub org (clone-all 용) ──
 ORG_URL := https://github.com/ThisPod-ThatPod
 
-.PHONY: help setup check clone-all kubeconfig \
+.PHONY: help setup check clone-all kubeconfig guard-account \
         infra-init infra-fmt infra-plan infra-apply infra-destroy \
         app-build-push deploy destroy-all destroy-all-yes
 
@@ -83,19 +94,26 @@ clone-all: ## 세 레포를 형제로 clone (이미 있으면 건너뜀)
 		fi; \
 	done
 
-kubeconfig: ## EKS kubeconfig 갱신
+# ── 계정 가드 : AWS 를 만지는 target 의 선행조건 ───────────
+# 이게 없으면 make infra-apply 가 계정 대조 없이 곧장 terraform 을 돌린다.
+# teardown.sh 가 destroy 를 막아도 make infra-destroy 는 그 스크립트를 안 거친다.
+# fmt 만 예외다 — 자격증명이 아예 필요 없다(docs/비용관리.md §0).
+guard-account: ## 지금 자격증명이 공용 계정(tptp)인지 대조 (아니면 중단)
+	@bash scripts/guard_account.sh
+
+kubeconfig: guard-account ## EKS kubeconfig 갱신
 	aws eks update-kubeconfig --name $(CLUSTER_NAME) --region $(AWS_REGION)
 
 # ── 위임 : infra (그룹 A) ─────────────────────────────────
-infra-init:    ; $(call REQUIRE_DIR,$(INFRA_DIR)) ; make -C $(INFRA_DIR) init
-infra-fmt:     ; $(call REQUIRE_DIR,$(INFRA_DIR)) ; make -C $(INFRA_DIR) fmt
-infra-plan:    ; $(call REQUIRE_DIR,$(INFRA_DIR)) ; make -C $(INFRA_DIR) plan
-infra-apply:   ; $(call REQUIRE_DIR,$(INFRA_DIR)) ; make -C $(INFRA_DIR) apply
-infra-destroy: ; $(call REQUIRE_DIR,$(INFRA_DIR)) ; make -C $(INFRA_DIR) destroy
+infra-init:    guard-account ; $(call REQUIRE_DIR,$(INFRA_DIR)) ; make -C $(INFRA_DIR) init
+infra-fmt:                   ; $(call REQUIRE_DIR,$(INFRA_DIR)) ; make -C $(INFRA_DIR) fmt
+infra-plan:    guard-account ; $(call REQUIRE_DIR,$(INFRA_DIR)) ; make -C $(INFRA_DIR) plan
+infra-apply:   guard-account ; $(call REQUIRE_DIR,$(INFRA_DIR)) ; make -C $(INFRA_DIR) apply
+infra-destroy: guard-account ; $(call REQUIRE_DIR,$(INFRA_DIR)) ; make -C $(INFRA_DIR) destroy
 
 # ── 위임 : app (그룹 B) / manifests (그룹 C) ──────────────
-app-build-push: ; $(call REQUIRE_DIR,$(APP_DIR))       ; make -C $(APP_DIR) build-push
-deploy:         ; $(call REQUIRE_DIR,$(MANIFESTS_DIR)) ; make -C $(MANIFESTS_DIR) deploy
+app-build-push: guard-account ; $(call REQUIRE_DIR,$(APP_DIR))       ; make -C $(APP_DIR) build-push
+deploy:         guard-account ; $(call REQUIRE_DIR,$(MANIFESTS_DIR)) ; make -C $(MANIFESTS_DIR) deploy
 
 # ── 정리 : teardown 지휘 스크립트에 위임 (manifest→infra→app 순서·안전 통제) ──
 destroy-all: ## 전체 정리 (manifest→infra→app 순 · 단계별 확인)
