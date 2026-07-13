@@ -141,14 +141,35 @@ unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 
 ---
 
-## 브랜치·머지 규칙 (초기: 팀장 단독)
+## 브랜치·머지 규칙
 
-ops 레포는 **배포 대상이 아니라 도구**이고 초기엔 팀장 단독 작업이라, 다른 세 레포와 달리 **셀프 머지**를 허용합니다.
+ops 는 **배포 대상이 아니라 운영 도구**이고 사실상 팀장 단독 작업이라, 다른 세 레포와 달리 **가볍게 갑니다.**
 
 - 브랜치: `main` 단일 (dev 없음).
-- **PR 은 만들되(이력 목적) 승인 0으로 셀프 Squash 머지.**
-  - GitHub → Settings → Branches → `main` ruleset: *Require a pull request = ON · Require approvals = 0*.
-- 팀원 기여가 시작되면 → *Require approvals = 1* + "본인 승인 무효"로 올려 다른 레포와 동일 규칙으로 전환.
+- **branch protection(ruleset)은 걸지 않습니다** (팀 결정). 실제로 `main` 은 `protected: false` 이고 ruleset 의 enforcement 가 비활성이라 **직접 push 가 됩니다**(2026-07-13 확인).
+- PR 은 이력·리뷰 목적으로 자유롭게 씁니다. 승인 없이 셀프 Squash 머지.
+
+### 🔔 CODEOWNERS — 게이트가 아니라 알림입니다
+
+`.github/CODEOWNERS` 가 **teardown 계열 파일**에 리뷰어를 걸어 둡니다.
+
+| | ruleset 없이 되나 |
+|---|---|
+| 해당 파일이 바뀐 **PR 이 열리면 자동으로 리뷰어 지정** | ✅ **됩니다** |
+| 리뷰어 승인 없이는 **머지를 막는다** | ❌ ruleset 이 있어야 합니다 |
+
+**즉 막지는 않고 놓치지 않게만 합니다.** `main` 에 직접 push 하면 당연히 안 걸립니다.
+
+**함정 두 가지** (GitHub 공식 문서)
+
+- **CODEOWNERS 는 PR 의 base 브랜치(`main`)에 있어야 동작합니다.** 이 파일을 추가하는 PR 자체에는 리뷰 요청이 안 뜹니다. **머지된 뒤부터** 유효합니다.
+- **GitHub 은 PR 작성자 본인에게는 리뷰 요청을 보내지 않습니다.** 이미선이 직접 여는 PR 에는 안 뜹니다. **실효 대상은 팀장이 여는 teardown PR** 입니다.
+
+> ⚠️ 한글 경로(`teardown_체크리스트.md`)는 문법 검증은 통과했지만 공식 문서가 non-ASCII 매칭을 보증하지 않습니다. **머지 후 한 번 실증**이 필요합니다.
+
+**왜 teardown 만 거는가.** ops 는 팀원 전원 서버에서 실행되고 **AWS 를 통째로 지웁니다.** 실행 반경이 다른 레포보다 큽니다. 전체를 승인 필수로 만들면 속도가 죽으니 **삭제를 수행하는 파일에만** 리뷰를 겁니다.
+
+**대상:** `scripts/teardown.sh` · `teardown_체크리스트.md` · `scripts/_lib.sh` · `scripts/guard_account.sh` (계정 가드)
 
 ---
 
