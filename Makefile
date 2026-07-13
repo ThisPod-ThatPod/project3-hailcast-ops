@@ -32,7 +32,7 @@ AWS_REGION   ?= ap-northeast-2
 # ── GitHub org (clone-all 용) ──
 ORG_URL := https://github.com/ThisPod-ThatPod
 
-.PHONY: help setup check clone-all kubeconfig guard-account \
+.PHONY: help setup check check-contract clone-all kubeconfig guard-account \
         infra-init infra-fmt infra-plan infra-apply infra-destroy \
         app-build-push deploy destroy-all destroy-all-yes
 
@@ -47,6 +47,9 @@ help: ## 명령 목록
 	@echo "  make check          환경·자격증명·EKS 연결 점검"
 	@echo "  make clone-all      infra/app/manifests 세 레포를 형제로 clone"
 	@echo "  make kubeconfig     EKS kubeconfig 갱신 (apply 이후)"
+	@echo ""
+	@echo "  [ 계약 검증 ]"
+	@echo "  make check-contract 규약서(이름 계약)와 실제 코드·실물이 어긋났는지 검사"
 	@echo ""
 	@echo "  [ 위임 — infra (그룹 A) ]"
 	@echo "  make infra-init     terraform init"
@@ -82,6 +85,19 @@ setup: ## 도구 설치 + 자격 + kubeconfig
 check: ## 환경 점검
 	@chmod +x scripts/check.sh
 	./scripts/check.sh
+
+# ── 이름 계약 검증 ────────────────────────────────────────
+# 규약서(docs/네이밍규약서.md)가 단일 진실원천이다. 그 이름들을 앱·ML·배포팀이 코드에
+# 그대로 참조하므로, 한 글자만 어긋나도 대개 '에러 없이 조용히' 죽는다.
+# 이 검증기가 그걸 시연 직전이 아니라 매일 잡는다.
+#
+# ⚠️ guard-account 를 선행조건으로 걸지 않는다. 걸면 자격증명이 없을 때 시작조차 못 하는데,
+#    정적 검사(terraform 소스 대조)는 자격증명 없이 돌아야 한다(비용관리.md §0).
+#    계정 대조는 스크립트 안에서 하고, 아니면 런타임 검사만 건너뛴다.
+check-contract: ## 규약서 이름 계약 검사 (정적: 항상 · 런타임: apply 이후)
+	$(call REQUIRE_DIR,$(INFRA_DIR))
+	@chmod +x scripts/check_contract.sh
+	@INFRA_DIR="$(INFRA_DIR)" ./scripts/check_contract.sh
 
 clone-all: ## 세 레포를 형제로 clone (이미 있으면 건너뜀)
 	@for r in infra app manifests; do \
