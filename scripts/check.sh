@@ -5,7 +5,7 @@
 # 실행 : bash check.sh   또는   make check
 # =============================================================
 
-# ── 공용 상수·계정 가드 (CLUSTER_NAME · AWS_REGION · AWS_PROFILE · TPTP_ACCOUNT_ID) ──
+# ── 공용 상수·계정 가드 (CLUSTER_NAME · AWS_REGION · PROJECT_ACCOUNT_ID) ──
 # shellcheck source=scripts/_lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
 
@@ -55,24 +55,25 @@ if command -v docker &>/dev/null; then
 fi
 echo ""
 
-# ── 3. AWS 자격증명 (공용 계정 tptp · 전용 프로필) ─────────
-# ⭐ 계정 ID 를 '출력'만 하지 않고 tptp 인지 '대조'한다.
-#    예전엔 대조가 없어 개인 계정에 앉은 채로도 초록불이 떴다.
-echo "[ 3 ] AWS 자격증명 확인 (공용 계정 tptp · 프로필 $AWS_PROFILE)"
-rc=0; verify_tptp_account || rc=$?
+# ── 3. AWS 자격증명 (프로젝트 계정) ────────────────────────
+# ⭐ 계정 ID 를 '출력'만 하지 않고 프로젝트 계정인지 '대조'한다.
+#    예전엔 대조가 없어 엉뚱한 계정에 앉은 채로도 초록불이 떴다.
+echo "[ 3 ] AWS 자격증명 확인 (프로젝트 계정)"
+rc=0; verify_project_account || rc=$?
 case "$rc" in
     0)
-        ok "공용 계정 tptp 확인 : $CURRENT_ACCOUNT (프로필 $AWS_PROFILE)"
-        REGION=$(aws configure get region --profile "$AWS_PROFILE" 2>/dev/null || true)
+        ok "프로젝트 계정 확인 : $CURRENT_ACCOUNT"
+        REGION=$(aws configure get region 2>/dev/null || true)
         [ "$REGION" = "$AWS_REGION" ] && ok "리전 정상 : $AWS_REGION" || warn "리전이 $AWS_REGION(서울)이 아님: ${REGION:-미설정}"
         ;;
     1)
-        fail "공용 계정이 아닙니다 → 현재 $CURRENT_ACCOUNT / 기대 $TPTP_ACCOUNT_ID"
+        fail "프로젝트 계정이 아닙니다 → 현재 $CURRENT_ACCOUNT / 기대 $PROJECT_ACCOUNT_ID"
         echo "     이 상태로 terraform 을 돌리면 엉뚱한 계정을 봅니다."
-        echo "     프로필 재등록:  aws configure --profile $AWS_PROFILE"
+        echo "     지금 무엇이 잡혀 있는지:  aws sts get-caller-identity"
+        echo "     ⚠️ 환경변수(AWS_ACCESS_KEY_ID)는 프로필보다 우선합니다."
         ;;
     2)
-        fail "프로필 '$AWS_PROFILE' 자격증명 없음/만료 → bash scripts/setup.sh"
+        fail "AWS 자격증명 없음/만료 → bash scripts/setup.sh"
         ;;
 esac
 echo ""
@@ -102,7 +103,7 @@ echo ""
 
 # ── 5. 비용 안내 ───────────────────────────────────────────
 echo "[ 5 ] 비용 안내"
-echo "  - 공용 AWS 계정(tptp) 사용 → EKS·NAT·노드는 상시 과금. 실습 후 반드시 make destroy-all"
+echo "  - EKS·NAT·RDS 는 켜두기만 해도 상시 과금. 안 쓸 땐 노드를 0 으로 줄이거나 destroy"
 echo "  - apply(비용 시작) 시점은 Budgets 확인 후 팀 결정 (Context A-7)"
 echo "  - RDS 는 destroy 로부터 보호 장치 아님 → 보존 필요 시 스냅샷 먼저"
 echo ""

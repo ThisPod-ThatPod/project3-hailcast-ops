@@ -5,7 +5,7 @@
 # 대상 OS : Rocky Linux 8.x   (proj-mgmt : 172.16.8.150)
 # 목적    : proj-mgmt 를 '프로젝트 운영 콘솔'로 세팅
 #           AWS CLI v2 · Terraform · kubectl · helm · Docker 설치·검증
-#           + 공용 AWS 계정(tptp) · 공용 Docker Hub(hailscale) 로그인
+#           + 프로젝트 AWS 계정 · 공용 Docker Hub(hailscale) 로그인
 #           + EKS kubeconfig 연결 (aws eks update-kubeconfig)
 # 실행    : bash setup.sh   (또는 make setup)
 # 비고    : 하이브리드(Tailscale/VXLAN) 없음 — AWS 단일·EKS 아키텍처.
@@ -14,7 +14,7 @@
 
 set -e  # 오류 발생 시 즉시 중단
 
-# ── 공용 상수·계정 가드 (CLUSTER_NAME · AWS_REGION · AWS_PROFILE · TPTP_ACCOUNT_ID) ──
+# ── 공용 상수·계정 가드 (CLUSTER_NAME · AWS_REGION · PROJECT_ACCOUNT_ID) ──
 # shellcheck source=scripts/_lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
 
@@ -78,83 +78,46 @@ else
     info "STEP 2/8 : AWS CLI 건너뜀"
 fi
 
-# ── STEP 2.5 : AWS 자격증명 확인/등록 (공용 계정 tptp · 전용 프로필) ──────────
+# ── STEP 2.5 : AWS 자격증명 확인/등록 (프로젝트 계정) ────────────────────────
 # 동작:
-#   - 공용 키는 [default] 가 아니라 '${AWS_PROFILE}' 프로필에 저장한다 → 개인 default 를 안 건드린다
-#   - 키가 없으면 aws configure --profile 로 입력받는다
-#   - ⭐ 키가 있어도 '누구 계정인지' 반드시 대조한다. 예전엔 이 대조가 없어 개인 계정도 초록불이었다
+#   - 자격증명 '출처'는 강제하지 않는다. AWS 기본 체인(환경변수 → AWS_PROFILE → [default])을 쓴다.
+#   - 없으면 aws configure 로 입력받는다.
+#   - ⭐ 키가 있어도 '누구 계정인지' 반드시 대조한다. 예전엔 이 대조가 없어 엉뚱한 계정도 초록불이었다.
 #   - 키 값은 스크립트·깃에 절대 두지 않는다. 로컬 ~/.aws 에만 저장.
-info "STEP 2.5/8 : AWS 자격증명 확인 (공용 계정 tptp · 프로필 ${AWS_PROFILE})..."
-
-# ⚠️ 환경변수 자격증명은 프로필보다 우선한다 → 프로필을 아무리 잘 잡아도 무시된다
-if [ -n "${AWS_ACCESS_KEY_ID:-}" ]; then
-    warning "환경변수 AWS_ACCESS_KEY_ID 가 설정돼 있습니다. 이건 프로필보다 우선합니다."
-    echo    "    프로필을 제대로 잡아도 이 키가 쓰입니다. 아래를 먼저 실행하고 재시도하세요."
-    echo    "    unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN"
-fi
-
-AWS_AKID=$(aws configure get aws_access_key_id     --profile "$AWS_PROFILE" 2>/dev/null || true)
-AWS_SAK=$(aws configure get aws_secret_access_key  --profile "$AWS_PROFILE" 2>/dev/null || true)
-
-# ── 마이그레이션 : 예전 setup.sh 로 공용 키가 이미 [default] 에 들어간 서버 대응 ──
-# 프로필 분리 이전에 setup.sh 를 돌린 사람은 tptp 키가 [default] 에 있다.
-# 그대로 두면 (a) 키를 다시 물어보게 되고 (b) 무엇보다 공용 키가 default 에 앉은 채로 남아,
-# 그 서버에서 만드는 모든 자원(강의 실습 포함)이 기본으로 공용 계정에 생긴다.
 #
-# ⚠️ 판정과 복사를 반드시 '같은 소스(파일의 [default] 키)' 로 한다.
-#    판정을 sts 로 하면 환경변수 자격증명이 이겨서, 정작 복사는 파일의 '개인 키' 를
-#    가져오는 사고가 난다(계정은 tptp 로 보이는데 키는 개인 것).
-if [ -z "$AWS_AKID" ] || [ -z "$AWS_SAK" ]; then
-    D_AKID=$(aws configure get aws_access_key_id     --profile default 2>/dev/null || true)
-    D_SAK=$(aws configure get aws_secret_access_key  --profile default 2>/dev/null || true)
-    if [ -n "$D_AKID" ] && [ -n "$D_SAK" ]; then
-        # 파일의 [default] 키 '그 자체' 가 tptp 인지 본다 (환경변수를 배제하고 서명)
-        D_ACCOUNT=$(AWS_ACCESS_KEY_ID="$D_AKID" AWS_SECRET_ACCESS_KEY="$D_SAK" AWS_SESSION_TOKEN="" \
-                    aws sts get-caller-identity --query Account --output text 2>/dev/null || true)
-        if [ "$D_ACCOUNT" = "$TPTP_ACCOUNT_ID" ]; then
-            warning "[default] 프로필에 공용 계정(tptp) 키가 들어 있습니다 → '${AWS_PROFILE}' 로 복사합니다."
-            aws configure set aws_access_key_id     "$D_AKID" --profile "$AWS_PROFILE"
-            aws configure set aws_secret_access_key "$D_SAK"  --profile "$AWS_PROFILE"
-            aws configure set region "$AWS_REGION"            --profile "$AWS_PROFILE"
-            aws configure set output json                     --profile "$AWS_PROFILE"
-            AWS_AKID="$D_AKID"; AWS_SAK="$D_SAK"
-            success "  '${AWS_PROFILE}' 프로필로 복사 완료 (키 재입력 불필요)"
-            warning "  ⚠️ [default] 에 남은 공용 키는 자동으로 지우지 않습니다 — 개인 설정을 함부로 건드리지 않기 위함입니다."
-            echo    "     하지만 남겨두면 이 서버에서 만드는 모든 자원이 기본으로 공용 계정에 생깁니다."
-            echo    "     직접 치워 주세요:  ~/.aws/credentials 의 [default] 를 개인 키로 되돌리거나 비웁니다."
-        fi
-    fi
-fi
-
-if [ -z "$AWS_AKID" ] || [ -z "$AWS_SAK" ]; then
-    warning "프로필 '${AWS_PROFILE}' 미설정 → 공용 계정(tptp) 키를 입력합니다."
-    echo "    ⚠️ 개인 키가 아니라 '공용 계정(tptp)' 키입니다. 개인 [default] 프로필은 건드리지 않습니다."
-    echo "    입력값: Access Key / Secret Key / region=${AWS_REGION} / output=json"
-    aws configure --profile "$AWS_PROFILE"
-    # region/output 이 비어 있으면 기본값 보정 (Enter 로 건너뛴 경우 대비)
-    [ -z "$(aws configure get region --profile "$AWS_PROFILE" 2>/dev/null)" ] && aws configure set region "$AWS_REGION" --profile "$AWS_PROFILE"
-    [ -z "$(aws configure get output --profile "$AWS_PROFILE" 2>/dev/null)" ] && aws configure set output json   --profile "$AWS_PROFILE"
-fi
+# ⚠️ 옛 버전은 AWS_PROFILE=hailcast 를 강제하고 [default] 에서 키를 복사해 왔다.
+#    프로젝트 계정과 담당자 개인 계정이 '달랐을 때' 개인 [default] 를 보호하려던 장치다.
+#    2026-07-14 부터 프로젝트 계정 = 담당자 개인 계정이라 그 전제가 사라졌다.
+#    강제를 남겨두면 [default] 를 쓰는 서버와 CI(OIDC 환경변수) 양쪽에서 죽는다. → 제거했다.
+#    안전망은 프로필 이름이 아니라 '어느 계정에 서 있는가' 다 (verify_project_account).
+info "STEP 2.5/8 : AWS 자격증명 확인 (프로젝트 계정)..."
 
 # ⭐ 계정 가드 — 키가 '유효한가'가 아니라 '누구 것인가'를 본다
-rc=0; verify_tptp_account || rc=$?
+rc=0; verify_project_account || rc=$?
+
 if [ "$rc" = "2" ]; then
-    # 키는 있는데 인증이 안 된다(만료·오타) → 한 번만 다시 입력받아 본다
-    warning "프로필 '${AWS_PROFILE}' 인증 실패(키 만료·오타 가능) → 다시 입력합니다."
-    aws configure --profile "$AWS_PROFILE"
-    rc=0; verify_tptp_account || rc=$?
+    warning "AWS 자격증명이 없거나 만료됐습니다 → 지금 등록합니다."
+    echo    "    입력값: Access Key / Secret Key / region=${AWS_REGION} / output=json"
+    aws configure
+    # region/output 이 비어 있으면 기본값 보정 (Enter 로 건너뛴 경우 대비)
+    [ -z "$(aws configure get region 2>/dev/null)" ] && aws configure set region "$AWS_REGION"
+    [ -z "$(aws configure get output 2>/dev/null)" ] && aws configure set output json
+    rc=0; verify_project_account || rc=$?
 fi
+
 case "$rc" in
-    0) success "  공용 계정(tptp) 확인 : ${CURRENT_ACCOUNT} · 프로필 ${AWS_PROFILE}" ;;
-    1) error "공용 계정(tptp)이 아닙니다. 현재 계정=${CURRENT_ACCOUNT} / 기대=${TPTP_ACCOUNT_ID}
-            프로필 '${AWS_PROFILE}' 에 개인 키가 들어간 것으로 보입니다.
-            지우고 다시 등록:  aws configure --profile ${AWS_PROFILE}" ;;
-    *) error "프로필 '${AWS_PROFILE}' 인증에 계속 실패합니다. 키를 확인하세요.
-            다시 등록:  aws configure --profile ${AWS_PROFILE}" ;;
+    0) success "  프로젝트 계정 확인 : ${CURRENT_ACCOUNT}" ;;
+    1) error "프로젝트 계정이 아닙니다. 현재 계정=${CURRENT_ACCOUNT} / 기대=${PROJECT_ACCOUNT_ID}
+            다른 계정의 자격증명이 잡혀 있습니다.
+            지금 무엇이 잡혀 있는지:  aws sts get-caller-identity
+            ⚠️ 환경변수(AWS_ACCESS_KEY_ID)는 프로필·[default] 보다 우선합니다.
+               설정돼 있다면:  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN" ;;
+    *) error "AWS 자격증명 인증에 계속 실패합니다. 키를 확인하세요.
+            다시 등록:  aws configure" ;;
 esac
 
 # region 이 서울이 아니면 경고
-CUR_REGION=$(aws configure get region --profile "$AWS_PROFILE" 2>/dev/null || true)
+CUR_REGION=$(aws configure get region 2>/dev/null || true)
 [ -n "$CUR_REGION" ] && [ "$CUR_REGION" != "$AWS_REGION" ] && \
     warning "현재 region=$CUR_REGION (서울 ${AWS_REGION} 권장)"
 
@@ -270,7 +233,8 @@ fi
 # ── STEP 7 : EKS kubeconfig 연결 ───────────────────────────
 # EKS 는 로컬 k8s 처럼 admin.conf 를 scp 하지 않는다.
 # 아래 한 줄이 ~/.kube/config 를 자동 생성한다. 클러스터가 아직 apply 전이면 경고만 남기고 넘어간다.
-# (권한: 공용 계정 tptp 가 클러스터 생성자라 자동 admin — bootstrap_cluster_creator_admin_permissions=true)
+# (권한: 클러스터 '생성자' 만 자동 admin — bootstrap_cluster_creator_admin_permissions=true.
+#  생성자가 아닌 사람은 EKS access entry 에 등재돼야 kubectl 이 된다 — 규약서 §5-3)
 info "STEP 7/8 : EKS kubeconfig 연결 (${CLUSTER_NAME})..."
 if aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" &>/dev/null; then
     aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION" \
@@ -299,9 +263,9 @@ echo "============================================="
 echo ""
 echo "  다음 단계:"
 echo "   1) docker 그룹 적용:   newgrp docker  (또는 재로그인)"
-echo "   2) AWS 자격증명:       프로필 '${AWS_PROFILE}' 에 공용 계정(tptp) 키 저장됨 (개인 default 는 그대로)"
-echo "                          → make 로 돌리면 AWS_PROFILE 이 자동 적용됩니다."
-echo "                          → 터미널에서 직접 aws/terraform 을 쓸 땐:  export AWS_PROFILE=${AWS_PROFILE}"
+echo "   2) AWS 자격증명:       프로젝트 계정(${CURRENT_ACCOUNT}) 확인됨"
+echo "                          → 자격증명 출처는 강제하지 않습니다(환경변수 · 프로필 · [default] 무엇이든)."
+echo "                          → make 는 매번 'guard-account' 로 계정을 대조합니다."
 echo "   3) Docker Hub :        setup.sh 중 입력한 공용(hailscale) 토큰으로 자동 로그인됨"
 echo "   4) EKS 연결:           apply 후  aws eks update-kubeconfig --name ${CLUSTER_NAME} --region ${AWS_REGION}"
 echo "   5) 환경 점검:          make check"

@@ -6,7 +6,7 @@
 > ⚠️ **[2026-07 변경]** `make destroy-all-yes` 는 이제 **실제로 전 자원을 삭제**한다.
 > (이전엔 CONFIRM 미주입이라 미리보기만 됐지만, teardown_infra.sh + ops CONFIRM 주입 반영 후 진짜 destroy 가 돈다.)
 > 자동 안전장치 2개가 걸리지만, **이 체크리스트를 먼저 훑는 것**이 우선이다.
-> - **계정가드:** 현재 AWS 계정이 공용(tptp)이 아니면 시작 전에 스스로 중단.
+> - **계정가드:** 현재 AWS 계정이 프로젝트 계정이 아니면 시작 전에 스스로 중단.
 > - **ALB 가드:** K8s 가 만든 ALB 가 살아있으면 infra destroy 가 멈춤(manifest 를 먼저 지우라는 뜻).
 
 > 실행 순서 요약:  ① manifest(K8s·ALB) → ② infra(terraform destroy) → ③ app(로컬 청소)
@@ -25,7 +25,7 @@
   - ops 의 `destroy-all` 은 infra 단계에 이걸 **자동 주입**한다(사람이 칠 필요 없음).
 - `FORCE=yes`   : ALB 가 살아있어도 강행한다. **자동 주입 안 됨 — 사람이 직접 지정해야 함.**
   - 정상 흐름에선 쓸 일 없음. manifest 를 먼저 지우면 ALB 가 사라져 FORCE 가 불필요.
-- `EXPECTED_ACCOUNT` : 공용(tptp) 계정 12자리 ID. 스크립트 상단 상수. 다른 계정이면 중단.
+- `PROJECT_ACCOUNT_ID` : 프로젝트 계정 12자리 ID. **`.env`(gitignore) 에 둔다** — 이 레포는 퍼블릭이라 코드에 박지 않는다. 다른 계정이면 중단.
 
 ---
 
@@ -35,9 +35,9 @@
 - [ ] **RDS 데이터 보존 필요?** `skip_final_snapshot=true`라 destroy 시 **사라진다.** 남길 거면 스냅샷 먼저:
       `aws rds create-db-snapshot --db-instance-identifier hailcast-dev-rds-postgres --db-snapshot-identifier hailcast-dev-final-YYYYMMDD --region ap-northeast-2`
 - [ ] **S3 모델/예측 JSON 보존 필요?** `force_destroy=true`라 객체째 삭제됨. 남길 거면 로컬로 내려받기.
-      ※ 현재 유현상님 S3 PR(#27)은 `force_destroy=false`라 destroy 가 `BucketNotEmpty`로 막힐 수 있음 → 그 PR에서 dev 기본값 true 로 정리 예정.
+      ※ S3 모델 버킷은 `force_destroy=true` 로 정리됨(infra #33) → `BucketNotEmpty` 로 막히지 않는다.
 - [ ] **현재 비용 확인** — Budgets/Cost Explorer로 오늘까지 과금 스냅샷(사후 비교용).
-- [ ] 형제 폴더 구조 정상(`~/project3-hailcast/` 아래 4개), `aws sts get-caller-identity` = **tptp 계정**, region=ap-northeast-2.
+- [ ] 형제 폴더 구조 정상(`~/project3-hailcast/` 아래 4개), `aws sts get-caller-identity` = **프로젝트 계정**(`.env` 의 PROJECT_ACCOUNT_ID 와 일치), region=ap-northeast-2.
       ※ 계정가드가 자동 확인하지만, 사람도 눈으로 한 번 더 본다.
 
 ## 1. manifest 정리 (가장 먼저 — VPC destroy 막는 원인 제거)
@@ -61,7 +61,7 @@
   - [ ] Elastic IP(미연결 시 과금)
   - [ ] NAT Gateway
   - [ ] CloudWatch 로그 그룹(`/aws/eks/...`, `/aws/rds/...`)
-  - [ ] (부트스트랩) tfstate 버킷 **`hailcast-dev-tfstate-9dcd`** 은 **일부러 남긴다**(Terraform 관리 밖). 완전 종료 시에만 수동 삭제.
+  - [ ] (부트스트랩) tfstate 버킷 **`hailcast-dev-tfstate-7dde`** 은 **일부러 남긴다**(Terraform 관리 밖). 완전 종료 시에만 수동 삭제.
 
 ## 3. app 정리 (각자 로컬 — 맨 마지막)
 

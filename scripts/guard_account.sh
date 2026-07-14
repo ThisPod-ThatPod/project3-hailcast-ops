@@ -2,7 +2,7 @@
 # =============================================================
 # 파일위치 : project3-hailcast-ops/scripts/guard_account.sh
 # 역할    : AWS 를 만지는 make target 앞에 세우는 계정 가드.
-#           지금 자격증명이 공용 계정(tptp)인지 대조하고, 아니면 여기서 끊는다.
+#           지금 자격증명이 프로젝트 계정인지 대조하고, 아니면 여기서 끊는다.
 # 호출    : Makefile 의 guard-account target (infra-apply·infra-destroy·kubeconfig 등의 선행조건)
 #
 # 왜 필요한가:
@@ -20,19 +20,20 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
 
-rc=0; verify_tptp_account || rc=$?
+rc=0; verify_project_account || rc=$?
 case "$rc" in
     0)
-        echo -e "${GREEN}✅ 공용 계정(tptp) 확인 : ${CURRENT_ACCOUNT} · 프로필 ${AWS_PROFILE}${NC}"
+        echo -e "${GREEN}✅ 프로젝트 계정 확인 : ${CURRENT_ACCOUNT}${NC}"
         ;;
     1)
-        echo -e "${RED}❌ 공용 계정이 아닙니다 → 현재 ${CURRENT_ACCOUNT} / 기대 ${TPTP_ACCOUNT_ID}${NC}"
+        echo -e "${RED}❌ 프로젝트 계정이 아닙니다 → 현재 ${CURRENT_ACCOUNT} / 기대 ${PROJECT_ACCOUNT_ID}${NC}"
         echo   "   이대로 진행하면 엉뚱한 계정에 자원을 만들거나 지웁니다. 중단합니다."
-        echo   "   프로필 재등록:  aws configure --profile ${AWS_PROFILE}"
+        echo   "   지금 무엇이 잡혀 있는지 확인:  aws sts get-caller-identity"
+        echo   "   ⚠️ 환경변수(AWS_ACCESS_KEY_ID)는 프로필보다 우선합니다 — 설정돼 있으면 unset 하십시오."
         exit 1
         ;;
     *)
-        echo -e "${RED}❌ 프로필 '${AWS_PROFILE}' 자격증명 없음/만료${NC}"
+        echo -e "${RED}❌ AWS 자격증명이 없거나 만료됐습니다${NC}"
         echo   "   중단합니다.  make setup  으로 먼저 등록하세요."
         exit 1
         ;;
