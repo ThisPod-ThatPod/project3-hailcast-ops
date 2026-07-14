@@ -29,7 +29,9 @@
 #      거꾸로 하면 K8s 가 만든 LB·노드·EBS 가 tfstate 밖에 남아 계속 과금된다.
 #   2. CONFIRM / FORCE 분리 유지 — CONFIRM 은 '진짜 지운다',
 #      FORCE 는 'ALB 경고를 무시한다'. FORCE 를 자동 주입하면 안 된다.
-#   3. 계정 가드 우회 경로가 생기지 않았는지 (scripts/_lib.sh 의 verify_tptp_account).
+#   3. 계정 가드 우회 경로가 생기지 않았는지 (scripts/_lib.sh 의 verify_project_account).
+#      특히 .env 를 'source' 로 되돌리지 않았는지 — source 하면 가드가 검사하는 자격증명과
+#      terraform 이 쓰는 자격증명이 갈리고, 임의 코드 실행으로 가드를 속일 수 있다.
 #   4. destroy 뒤 고아 자원(EIP·EBS·스냅샷·ENI·LB) 확인 단계가 빠지지 않았는지.
 # =============================================================
 

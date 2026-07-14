@@ -14,16 +14,16 @@ INFRA_DIR     ?= ../project3-hailcast-infra
 APP_DIR       ?= ../project3-hailcast-app
 MANIFESTS_DIR ?= ../project3-hailcast-manifests
 
-# ── AWS 프로필 (공용 계정 tptp 전용) ──
-# 공용 키를 [default] 가 아니라 이름 있는 프로필에 둔다 → 팀원의 개인 default 를 건드리지 않는다.
-# export 하므로 make -C 로 위임되는 각 레포의 terraform·aws 도 이 프로필을 그대로 쓴다.
-# 값·이유는 scripts/_lib.sh 참조 (계정 ID 대조 가드도 거기 있다).
+# ── AWS 자격증명 : 프로필을 강제하지 않는다 ──
+# AWS 기본 자격증명 체인(환경변수 → AWS_PROFILE → [default])을 그대로 쓴다.
 #
-# ⚠️ '?=' 가 아니라 ':=' 다. make 는 환경변수를 '이미 정의된 변수'로 들여오므로,
-#    셸에 AWS_PROFILE=default 가 있으면 '?=' 는 그걸 덮지 않는다(GNU make 매뉴얼 §6.9).
-#    그러면 공용 키가 개인 [default] 에 저장되는, 이 가드가 막으려던 사고가 그대로 난다.
-AWS_PROFILE := hailcast
-export AWS_PROFILE
+# 옛 버전은 AWS_PROFILE := hailcast 를 강제했다. 프로젝트 계정과 담당자 개인 계정이
+# '달랐을 때' 공용 키가 개인 [default] 를 덮어쓰는 걸 막으려던 장치다.
+# 2026-07-14 부터 프로젝트 계정 = 담당자 개인 계정이라 그 전제가 사라졌고,
+# 강제를 남기면 [default] 를 쓰는 서버와 CI(OIDC 환경변수) 양쪽에서 죽는다.
+#
+# 안전망은 프로필 이름이 아니라 '어느 계정에 서 있는가' 다
+#   → guard-account target (scripts/guard_account.sh · scripts/_lib.sh)
 
 # ── EKS 접속 상수 ──
 CLUSTER_NAME ?= hailcast-dev-eks
@@ -98,7 +98,7 @@ clone-all: ## 세 레포를 형제로 clone (이미 있으면 건너뜀)
 # 이게 없으면 make infra-apply 가 계정 대조 없이 곧장 terraform 을 돌린다.
 # teardown.sh 가 destroy 를 막아도 make infra-destroy 는 그 스크립트를 안 거친다.
 # fmt 만 예외다 — 자격증명이 아예 필요 없다(docs/비용관리.md §0).
-guard-account: ## 지금 자격증명이 공용 계정(tptp)인지 대조 (아니면 중단)
+guard-account: ## 지금 자격증명이 프로젝트 계정인지 대조 (아니면 중단)
 	@bash scripts/guard_account.sh
 
 kubeconfig: guard-account ## EKS kubeconfig 갱신

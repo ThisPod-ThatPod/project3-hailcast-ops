@@ -13,12 +13,12 @@
 # 전제    : teardown_체크리스트.md 를 '먼저' 훑을 것(스냅샷·Budgets 등).
 # 안전    : infra 단계에 CONFIRM=yes 를 주입해 '실제 destroy' 를 돌린다.
 #           FORCE 는 주입하지 않는다 → ALB 가 살아있으면 사람이 경고를 보고 판단해야 한다.
-#           실행 전 '지금 이 계정이 공용(tptp)인지' 를 먼저 검증한다(오계정 전체삭제 방지).
+#           실행 전 '지금 이 계정이 프로젝트 계정인지' 를 먼저 검증한다(오계정 전체삭제 방지).
 # =============================================================
 
 set -u
 
-# ── 공용 상수·계정 가드 (AWS_PROFILE · TPTP_ACCOUNT_ID · verify_tptp_account) ──
+# ── 공용 상수·계정 가드 (PROJECT_ACCOUNT_ID · verify_project_account) ──
 # shellcheck source=scripts/_lib.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
 
@@ -26,7 +26,7 @@ INFRA_DIR="${INFRA_DIR:-../project3-hailcast-infra}"
 APP_DIR="${APP_DIR:-../project3-hailcast-app}"
 MANIFESTS_DIR="${MANIFESTS_DIR:-../project3-hailcast-manifests}"
 
-# ※ 공용 계정 ID(TPTP_ACCOUNT_ID)와 검증 함수(verify_tptp_account)는 scripts/_lib.sh 에 있다.
+# ※ 프로젝트 계정 ID(PROJECT_ACCOUNT_ID)와 검증 함수(verify_project_account)는 scripts/_lib.sh 에 있다.
 #   setup·check·teardown·make 가드가 같은 상수를 봐야 해서 한 곳으로 모았다.
 #   스크립트마다 따로 박으면 계정이 바뀔 때 하나만 고치고 나머지가 낡는다.
 
@@ -98,13 +98,13 @@ echo "============================================="
 # 되돌릴 방법이 없다. 그래서 확인 프롬프트보다 '먼저' 계정을 막는다.
 # (--only app 은 로컬 도커 청소라 AWS 를 안 건드린다 → 가드 제외)
 if [ "$ONLY" != "app" ]; then
-    rc=0; verify_tptp_account || rc=$?
+    rc=0; verify_project_account || rc=$?
     case "$rc" in
-        0) info "계정 확인 : ${CURRENT_ACCOUNT} (tptp) · 프로필 ${AWS_PROFILE}" ;;
-        1) err "공용 계정(tptp)이 아닙니다 → 현재 ${CURRENT_ACCOUNT} / 기대 ${TPTP_ACCOUNT_ID}"
+        0) info "계정 확인 : ${CURRENT_ACCOUNT} (프로젝트 계정)" ;;
+        1) err "프로젝트 계정이 아닙니다 → 현재 ${CURRENT_ACCOUNT} / 기대 ${PROJECT_ACCOUNT_ID}"
            err "teardown 을 중단합니다. 다른 계정의 자원을 지울 뻔했습니다."
            exit 1 ;;
-        2) err "프로필 '${AWS_PROFILE}' 자격증명 없음/만료 → bash scripts/setup.sh"
+        2) err "AWS 자격증명 없음/만료 → bash scripts/setup.sh"
            err "teardown 을 중단합니다."
            exit 1 ;;
     esac
