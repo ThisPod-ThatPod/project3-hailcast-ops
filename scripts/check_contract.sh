@@ -78,9 +78,9 @@ RDS_SG_NAME="${NAME_PREFIX}-sg-rds"            # 규약서 §5-5
 #   서브넷 발견은 kubernetes.io/role/elb · internal-elb 가 담당하고 그건 아래에서 검사한다.
 #   → 규약서 §6-1 에서 이 항목을 빼는 개정을 함께 올린다(짝 PR).
 
-# IRSA 7종 - '역할키|네임스페이스:SA이름' (규약서 §5-3)
+# IRSA 10종 - '역할키|네임스페이스:SA이름' (규약서 §5-3)
 # 역할명은 hailcast-dev-irsa-<역할키> 로 만들어진다.
-# forecast 는 폐기됐다(2026-07-13 · 결정 1 = predict 내장). 8종이 아니라 7종이다.
+# forecast 는 폐기됐다(2026-07-13 · predict 내장). weather-cron·simulator·eso 를 더해 10종이다.
 IRSA_BASE_KEYS=(lbctrl monitoring)             # enable_app_irsa 와 무관하게 항상 만들어진다
 IRSA_CONTRACT=(
   "lbctrl|kube-system:aws-load-balancer-controller"
@@ -88,8 +88,11 @@ IRSA_CONTRACT=(
   "predict|hailcast:predict-sa"
   "call-api|hailcast:call-api-sa"
   "worker|hailcast:worker-sa"
+  "weather-cron|hailcast:weather-cron-sa"
   "keda|keda:keda-operator"
   "karpenter|kube-system:karpenter"
+  "simulator|hailcast:simulator-sa"
+  "eso|external-secrets:external-secrets"
 )
 
 # 정당한 와일드카드의 sid 목록.
