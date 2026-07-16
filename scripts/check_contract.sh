@@ -78,9 +78,9 @@ RDS_SG_NAME="${NAME_PREFIX}-sg-rds"            # 규약서 §5-5
 #   서브넷 발견은 kubernetes.io/role/elb · internal-elb 가 담당하고 그건 아래에서 검사한다.
 #   → 규약서 §6-1 에서 이 항목을 빼는 개정을 함께 올린다(짝 PR).
 
-# IRSA 7종 - '역할키|네임스페이스:SA이름' (규약서 §5-3)
+# IRSA 10종 - '역할키|네임스페이스:SA이름' (규약서 §5-3)
 # 역할명은 hailcast-dev-irsa-<역할키> 로 만들어진다.
-# forecast 는 폐기됐다(2026-07-13 · 결정 1 = predict 내장). 8종이 아니라 7종이다.
+# forecast 는 폐기됐다(2026-07-13 · predict 내장). weather-cron·simulator·eso 를 더해 10종이다.
 IRSA_BASE_KEYS=(lbctrl monitoring)             # enable_app_irsa 와 무관하게 항상 만들어진다
 IRSA_CONTRACT=(
   "lbctrl|kube-system:aws-load-balancer-controller"
@@ -88,8 +88,11 @@ IRSA_CONTRACT=(
   "predict|hailcast:predict-sa"
   "call-api|hailcast:call-api-sa"
   "worker|hailcast:worker-sa"
+  "weather-cron|hailcast:weather-cron-sa"
   "keda|keda:keda-operator"
   "karpenter|kube-system:karpenter"
+  "simulator|hailcast:simulator-sa"
+  "eso|external-secrets:external-secrets"
 )
 
 # 정당한 와일드카드의 sid 목록.
@@ -313,7 +316,7 @@ else
     fail "RDS 5432 규칙이 SG 를 지목하지 않는다(§5-5)"
 fi
 
-# ── 1-5. IRSA 7종의 역할키 ↔ ServiceAccount 계약 (§5-3) ──
+# ── 1-5. IRSA 10종의 역할키 ↔ ServiceAccount 계약 (§5-3) ──
 # 이 문자열이 manifests 의 serviceaccount.yaml 과 맺는 계약이다.
 # IRSA 신뢰정책이 system:serviceaccount:<ns>:<sa> 로 못을 박으므로, 파드가 다른 SA 로 뜨면
 # AssumeRole 이 거부돼 '권한 없음' 이 된다. 로그만 보면 IAM 정책 문제로 착각하게 된다.
@@ -450,13 +453,13 @@ else
     # ── 2-3. IRSA 역할이 실제로 생성됐나 ──
     # ⚠️ 기대 개수를 '스위치 상태' 에서 뽑는다.
     #    enable_app_irsa = false 는 고장이 아니라 '설계된 정상 상태' 다(ARN 배선 전).
-    #    그걸 "2/7 개다" 라고 신고하면 정상 상태에 매일 빨간불이 뜬다.
+    #    그걸 "2/10 개다" 라고 신고하면 정상 상태에 매일 빨간불이 뜬다.
     if grep -rqE 'enable_app_irsa[[:space:]]*=[[:space:]]*true' "$INFRA_DIR"/envs/dev/*.tf 2>/dev/null; then
         EXPECT_KEYS=(); for p in "${IRSA_CONTRACT[@]}"; do EXPECT_KEYS+=("${p%%|*}"); done
         SWITCH_STATE="켜짐"
     else
         EXPECT_KEYS=("${IRSA_BASE_KEYS[@]}")
-        SWITCH_STATE="꺼짐(앱 5종은 아직 안 만들어지는 게 정상)"
+        SWITCH_STATE="꺼짐(앱 8종은 아직 안 만들어지는 게 정상)"
     fi
     IRSA_MADE=0; IRSA_ABSENT=""
     for key in "${EXPECT_KEYS[@]}"; do
