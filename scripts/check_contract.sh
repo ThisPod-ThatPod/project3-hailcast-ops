@@ -95,11 +95,14 @@ IRSA_CONTRACT=(
   "eso|external-secrets:external-secrets"
 )
 
-# 정당한 와일드카드의 sid 목록.
+# 정당한 와일드카드의 예외 목록. 형식은 "파일경로|sid" 다.
 # ⚠️ '와일드카드 금지' 가 아니라 '검토되지 않은 와일드카드 금지' 다.
 #    여기 없는 새 와일드카드가 생기면 빨간불이 뜬다. 예외를 추가할 땐 이유를 함께 적는다.
+# ⚠️ sid 만으로 면제하지 않고 파일까지 묶는다. sid 는 사람이 짓는 임의 문자열이라,
+#    앱 역할 정책에 이 sid 를 복붙하면 iam:*·Resource="*" 가 통째로 통과한다(sqs:* 면 PurgeQueue 까지).
 ALLOWED_WILDCARD_SIDS=(
-  "EcrAuth"   # ecr:GetAuthorizationToken 은 리소스 지정이 불가능한 계정 단위 액션이다(AWS 사양)
+  "modules/cicd/main.tf|EcrAuth"                       # ecr:GetAuthorizationToken 은 리소스 지정이 불가능한 계정 단위 액션이다(AWS 사양)
+  "modules/cicd/gha_tf.tf|TerraformManagedServices"    # #38 terraform apply 역할. 광역이 의도된 것 — 신뢰정책이 infra-apply environment·dev 브랜치·워크플로 파일로 잠갔다(규약서 §5-6). IAM 이 아니라 신뢰정책이 방어선
 )
 
 # 액션 와일드카드 금지 목록. sqs:* 는 sqs:PurgeQueue 를 '포함' 한다.
@@ -342,39 +345,43 @@ fi
 # 손으로 쓴 정책만 본다. upstream 벤더링(modules/eks/policies/)은 제외한다.
 # 원본에 * 가 정상적으로 들어 있어(ALB 컨트롤러 10건) 같이 세면 매일 거짓 경보가 뜬다.
 # 거짓 경보가 뜨는 검증기는 아무도 안 본다. 그러면 진짜 문제도 같이 묻힌다.
+# 이 파일의 이 sid 가 검토된 와일드카드 예외인가. 인자: sid, 파일경로(INFRA_DIR 기준 상대)
+is_allowed_sid() { local s; for s in "${ALLOWED_WILDCARD_SIDS[@]}"; do [ "$2|$1" = "$s" ] && return 0; done; return 1; }
+
 PURGE_BAD=0; WILD_BAD=0
 while IFS='|' read -r loc body; do
     [ -z "$body" ] && continue
     sid=$(echo "$body" | grep -oE 'sid[[:space:]]*=[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\(.*\)"/\1/')
+    eff=$(echo "$body" | grep -oE 'effect[[:space:]]*=[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\(.*\)"/\1/')
     acts=$(echo "$body" | grep -oE 'actions[[:space:]]*=[[:space:]]*\[[^]]*\]' | head -1)
     ress=$(echo "$body" | grep -oE 'resources[[:space:]]*=[[:space:]]*\[[^]]*\]' | head -1)
-    rel="${loc#"$INFRA_DIR"/}"
+    rel="${loc#"$INFRA_DIR"/}"    # 예: modules/cicd/gha_tf.tf:192 (줄번호 포함)
+    relf="${rel%:*}"              # allowlist 대조용. 줄번호를 뗀 파일경로
+
+    # Deny 문은 건너뛴다. 넓고 좁음의 의미가 Allow 와 정반대다 — Deny 의 Resource="*" 는
+    # '어디서도 금지' 라 넓을수록 안전하고, Deny 의 sqs:* 는 'PurgeQueue 조차 금지' 라 좁히면
+    # 오히려 구멍이 뚫린다. 1-6·1-7 은 '넓은 Allow' 를 잡는 검사다.
+    # (effect 생략 시 aws_iam_policy_document 기본값이 Allow 라, 빈 값은 Allow 로 본다)
+    [ "$eff" = "Deny" ] && continue
 
     # (1-6) PurgeQueue - 글자 그대로 + 와일드카드로 '포함' 되는 경우까지
     if echo "$acts" | grep -q 'PurgeQueue'; then
+        # 글자 그대로의 PurgeQueue 는 예외를 두지 않는다. 앱 역할에 리터럴 PurgeQueue 는 언제나 치명이다
         fail "sqs:PurgeQueue 권한이 있다 ($rel · sid=${sid:-없음}). 시연 중 큐가 비어 스케일링이 무너진다"
         PURGE_BAD=$((PURGE_BAD+1))
-    elif echo "$acts" | grep -qE '"(\*|sqs:\*)"'; then
+    elif echo "$acts" | grep -qE '"(\*|sqs:\*)"' && ! is_allowed_sid "$sid" "$relf"; then
         fail "액션 와일드카드가 sqs:PurgeQueue 를 포함한다 ($rel · sid=${sid:-없음}). 액션을 명시로 좁혀라"
         PURGE_BAD=$((PURGE_BAD+1))
     fi
 
     # (1-7) 과도 권한 - actions 전권 · resources 와일드카드
-    if echo "$acts" | grep -qE "$FORBIDDEN_ACTION_PATTERNS"; then
-        allowed=0
-        for a in "${ALLOWED_WILDCARD_SIDS[@]}"; do [ "$sid" = "$a" ] && allowed=1; done
-        if [ "$allowed" -eq 0 ]; then
-            fail "액션이 너무 넓다 ($rel · sid=${sid:-없음}): $acts"
-            WILD_BAD=$((WILD_BAD+1))
-        fi
+    if echo "$acts" | grep -qE "$FORBIDDEN_ACTION_PATTERNS" && ! is_allowed_sid "$sid" "$relf"; then
+        fail "액션이 너무 넓다 ($rel · sid=${sid:-없음}): $acts"
+        WILD_BAD=$((WILD_BAD+1))
     fi
-    if echo "$ress" | grep -qE '"\*"'; then
-        allowed=0
-        for a in "${ALLOWED_WILDCARD_SIDS[@]}"; do [ "$sid" = "$a" ] && allowed=1; done
-        if [ "$allowed" -eq 0 ]; then
-            fail "검토되지 않은 Resource=\"*\" ($rel · sid=${sid:-없음}). 리소스 단위로 좁혀라"
-            WILD_BAD=$((WILD_BAD+1))
-        fi
+    if echo "$ress" | grep -qE '"\*"' && ! is_allowed_sid "$sid" "$relf"; then
+        fail "검토되지 않은 Resource=\"*\" ($rel · sid=${sid:-없음}). 리소스 단위로 좁혀라"
+        WILD_BAD=$((WILD_BAD+1))
     fi
 done < <(iam_statements $(echo "$TF_FILES" | grep -v '/policies/'))
 [ "$PURGE_BAD" -eq 0 ] && ok "sqs:PurgeQueue 권한 없음 (와일드카드 포함 검사)"
