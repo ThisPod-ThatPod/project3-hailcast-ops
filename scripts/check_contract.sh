@@ -316,7 +316,7 @@ else
     fail "RDS 5432 규칙이 SG 를 지목하지 않는다(§5-5)"
 fi
 
-# ── 1-5. IRSA 7종의 역할키 ↔ ServiceAccount 계약 (§5-3) ──
+# ── 1-5. IRSA 10종의 역할키 ↔ ServiceAccount 계약 (§5-3) ──
 # 이 문자열이 manifests 의 serviceaccount.yaml 과 맺는 계약이다.
 # IRSA 신뢰정책이 system:serviceaccount:<ns>:<sa> 로 못을 박으므로, 파드가 다른 SA 로 뜨면
 # AssumeRole 이 거부돼 '권한 없음' 이 된다. 로그만 보면 IAM 정책 문제로 착각하게 된다.
@@ -453,13 +453,13 @@ else
     # ── 2-3. IRSA 역할이 실제로 생성됐나 ──
     # ⚠️ 기대 개수를 '스위치 상태' 에서 뽑는다.
     #    enable_app_irsa = false 는 고장이 아니라 '설계된 정상 상태' 다(ARN 배선 전).
-    #    그걸 "2/7 개다" 라고 신고하면 정상 상태에 매일 빨간불이 뜬다.
+    #    그걸 "2/10 개다" 라고 신고하면 정상 상태에 매일 빨간불이 뜬다.
     if grep -rqE 'enable_app_irsa[[:space:]]*=[[:space:]]*true' "$INFRA_DIR"/envs/dev/*.tf 2>/dev/null; then
         EXPECT_KEYS=(); for p in "${IRSA_CONTRACT[@]}"; do EXPECT_KEYS+=("${p%%|*}"); done
         SWITCH_STATE="켜짐"
     else
         EXPECT_KEYS=("${IRSA_BASE_KEYS[@]}")
-        SWITCH_STATE="꺼짐(앱 5종은 아직 안 만들어지는 게 정상)"
+        SWITCH_STATE="꺼짐(앱 8종은 아직 안 만들어지는 게 정상)"
     fi
     IRSA_MADE=0; IRSA_ABSENT=""
     for key in "${EXPECT_KEYS[@]}"; do
