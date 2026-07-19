@@ -7,6 +7,7 @@
 #           AWS CLI v2 · Terraform · kubectl · helm · Docker 설치·검증
 #           + 프로젝트 AWS 계정 · 공용 Docker Hub(hailscale) 로그인
 #           + EKS kubeconfig 연결 (aws eks update-kubeconfig)
+#           + 개인 [default] 보존 · 프로젝트 [hailcast] 프로필 자동 준비·전환 훅
 # 실행    : bash setup.sh   (또는 make setup)
 # 비고    : 하이브리드(Tailscale/VXLAN) 없음 — AWS 단일·EKS 아키텍처.
 #           Ansible 제외 — 인프라=Terraform, 배포=GitOps(ArgoCD)라 서버 구성 없음.
@@ -34,6 +35,64 @@ info()    { echo -e "${BLUE}[INFO]${NC}    $1"; }
 success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 error()   { echo -e "${RED}[ERROR]${NC}   $1"; exit 1; }
+
+# ── 자동 전환 훅 설치 (AWS_PROFILE + DOCKER_CONFIG 통합) ─────
+# 부모 셸(~/.bashrc)에서 도는 유일한 장치. 스크립트의 export 는 자식 스코프라
+# 부모 셸을 못 바꾸므로, '지속되는 자동 전환'은 반드시 여기(.bashrc)에서 한다.
+#   · AWS_PROFILE : project3-hailcast 바구니(4레포) 안이면 [hailcast], 밖이면 개인 [default]
+#     (단 [hailcast] 프로필이 있을 때만 — 없으면 default 가 이미 프로젝트 계정인 사람이라 그대로)
+#   · DOCKER_CONFIG : ops 폴더 안에서만 공용 금고(.docker_config)
+# 멱등 : 새 마커가 있으면 건너뛴다. 옛 'Docker 전용 cd 훅'이 있으면 제거 후 통합본으로 대체(이중 cd 방지).
+install_hailcast_hook() {
+    local OPS_DIR ROOT MARKER OLD_MARKER
+    OPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # scripts/ 의 상위 = ops 레포 루트
+    ROOT="$(cd "$OPS_DIR/.." && pwd)"                            # 그 상위 = project3-hailcast 바구니
+    MARKER="# hailcast 자동 전환 (AWS_PROFILE + DOCKER_CONFIG)"
+    OLD_MARKER="# hailcast-ops Docker Config 자동 격리 전환"
+
+    cp -f ~/.bashrc ~/.bashrc.hailcast.bak 2>/dev/null || true   # 안전 백업
+
+    # 옛 docker 전용 훅 제거(마커 줄 ~ 첫 '}' 까지) → 이중 cd 정의 방지
+    if grep -qF "$OLD_MARKER" ~/.bashrc 2>/dev/null; then
+        awk -v m="$OLD_MARKER" 'index($0,m){s=1} s&&/^}/{s=0;next} !s' ~/.bashrc > ~/.bashrc.tmp \
+            && mv ~/.bashrc.tmp ~/.bashrc
+        info "옛 Docker 전용 cd 훅 제거 → 통합본으로 교체"
+    fi
+
+    if grep -qF "$MARKER" ~/.bashrc 2>/dev/null; then
+        info "자동 전환 훅 이미 설치됨 → 건너뜀"
+        return
+    fi
+
+    cat >> ~/.bashrc << EOF
+
+$MARKER
+cd() {
+    builtin cd "\$@" || return
+    # AWS : project3-hailcast 바구니(4레포) 전체
+    if [[ "\$PWD" == "$ROOT" || "\$PWD" == "$ROOT/"* ]]; then
+        if grep -q '^\\[hailcast\\]' ~/.aws/credentials 2>/dev/null; then
+            export AWS_PROFILE=hailcast
+            [ -n "\${AWS_ACCESS_KEY_ID:-}" ] && echo "⚠️  환경변수 자격증명이 프로필을 덮어씁니다 → unset 필요"
+        fi
+    else
+        unset AWS_PROFILE
+    fi
+    # Docker : ops 폴더 안에서만 공용 금고
+    if [[ "\$PWD" == "$OPS_DIR" || "\$PWD" == "$OPS_DIR/"* ]]; then
+        export DOCKER_CONFIG="$OPS_DIR/.docker_config"
+    else
+        unset DOCKER_CONFIG
+    fi
+}
+# 새 셸이 이미 프로젝트 트리 안에서 열렸다면 즉시 적용(새 터미널 자동화)
+if [[ "\$PWD" == "$ROOT" || "\$PWD" == "$ROOT/"* ]] && grep -q '^\\[hailcast\\]' ~/.aws/credentials 2>/dev/null; then
+    export AWS_PROFILE=hailcast
+fi
+EOF
+    success "자동 전환 훅 설치 완료 (.bashrc) — AWS: $ROOT · Docker: $OPS_DIR/.docker_config"
+    info    "새 터미널을 열면 프로젝트 폴더에서 자동으로 [hailcast] 프로필이 잡힙니다."
+}
 
 echo ""
 echo "============================================="
@@ -79,41 +138,73 @@ else
 fi
 
 # ── STEP 2.5 : AWS 자격증명 확인/등록 (프로젝트 계정) ────────────────────────
-# 동작:
-#   - 자격증명 '출처'는 강제하지 않는다. AWS 기본 체인(환경변수 → AWS_PROFILE → [default])을 쓴다.
-#   - 없으면 aws configure 로 입력받는다.
-#   - ⭐ 키가 있어도 '누구 계정인지' 반드시 대조한다. 예전엔 이 대조가 없어 엉뚱한 계정도 초록불이었다.
-#   - 키 값은 스크립트·깃에 절대 두지 않는다. 로컬 ~/.aws 에만 저장.
-#
-# ⚠️ 옛 버전은 AWS_PROFILE=hailcast 를 강제하고 [default] 에서 키를 복사해 왔다.
-#    프로젝트 계정과 담당자 개인 계정이 '달랐을 때' 개인 [default] 를 보호하려던 장치다.
-#    2026-07-14 부터 프로젝트 계정 = 담당자 개인 계정이라 그 전제가 사라졌다.
-#    강제를 남겨두면 [default] 를 쓰는 서버와 CI(OIDC 환경변수) 양쪽에서 죽는다. → 제거했다.
-#    안전망은 프로필 이름이 아니라 '어느 계정에 서 있는가' 다 (verify_project_account).
+# 동작 요약:
+#   rc=0  현재 자격증명이 이미 프로젝트 계정        → 통과
+#   rc=2  자격증명 자체가 없음                       → aws configure 로 등록 후 재확인
+#   rc=1  유효하지만 '다른 계정'(대개 개인 [default]) → 개인 것은 그대로 두고
+#                                                     프로젝트 전용 [hailcast] 프로필을 준비·활성화
+#   · 키 값은 스크립트·깃에 절대 두지 않는다. 로컬 ~/.aws 에만 저장.
+#   · export AWS_PROFILE 는 '이 스크립트' 스코프용(STEP 3~8 을 프로젝트 계정으로).
+#     부모 셸 자동 전환은 install_hailcast_hook(.bashrc) 가 담당한다.
 info "STEP 2.5/8 : AWS 자격증명 확인 (프로젝트 계정)..."
 
-# ⭐ 계정 가드 — 키가 '유효한가'가 아니라 '누구 것인가'를 본다
 rc=0; verify_project_account || rc=$?
 
+# ── rc=2 : 자격증명 자체가 없음 → 먼저 등록 ───────────────
 if [ "$rc" = "2" ]; then
     warning "AWS 자격증명이 없거나 만료됐습니다 → 지금 등록합니다."
     echo    "    입력값: Access Key / Secret Key / region=${AWS_REGION} / output=json"
     aws configure
-    # region/output 이 비어 있으면 기본값 보정 (Enter 로 건너뛴 경우 대비)
     [ -z "$(aws configure get region 2>/dev/null)" ] && aws configure set region "$AWS_REGION"
     [ -z "$(aws configure get output 2>/dev/null)" ] && aws configure set output json
     rc=0; verify_project_account || rc=$?
 fi
 
+# ── rc=1 : 유효하지만 '다른 계정' → [hailcast] 프로필 자동 준비·전환 ──
+if [ "$rc" = "1" ]; then
+    # (A) 환경변수 자격증명이 원인이면 스크립트가 '이 셸에서' 못 지운다(자식 스코프).
+    #     게다가 env 는 프로필을 이겨서 프로필을 만들어도 무의미 → 하드 스톱.
+    if [ -n "${AWS_ACCESS_KEY_ID:-}" ]; then
+        error "환경변수 자격증명(현재=${CURRENT_ACCOUNT})이 잡혀 있습니다 — 프로필보다 우선합니다.
+            이 셸에서 직접 지운 뒤 재실행하세요(스크립트가 대신 못 지웁니다):
+              unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
+              make setup"
+    fi
+
+    # (B) 비대화형(CI 등)에서는 aws configure 가 입력 대기로 멈춘다 → 멈추고 안내.
+    [ -t 0 ] || error "비대화형 환경입니다(CI 등). 프로젝트 자격증명을 미리 주입하세요(GitHub Secret)."
+
+    warning "개인 계정(현재=${CURRENT_ACCOUNT})이 잡혀 있습니다 → 프로젝트 전용 [hailcast] 프로필을 준비합니다."
+
+    # (C) [hailcast] 프로필이 없으면 지금 입력받아 생성 (개인 [default] 는 건드리지 않음)
+    if ! aws configure list-profiles 2>/dev/null | grep -qx "hailcast"; then
+        echo "    팀 발급 키를 입력하세요 (region=${AWS_REGION}·output=json 자동 보정)"
+        aws configure --profile hailcast
+        aws configure --profile hailcast set region "$AWS_REGION"
+        aws configure --profile hailcast set output json
+    else
+        info "  기존 [hailcast] 프로필 사용"
+    fi
+
+    # (D) ⭐ 교차검증 : 프로필의 '실제 계정' == .env 의 '기대 계정' 인가
+    #     → '.env 에 계정 ID 를 제대로 넣었나' 를 여기서 자동으로 잡는다.
+    PROF_ACCT=$(aws sts get-caller-identity --profile hailcast --query Account --output text 2>/dev/null || true)
+    if [ "$PROF_ACCT" != "$PROJECT_ACCOUNT_ID" ]; then
+        error "[hailcast] 프로필 계정=${PROF_ACCT:-조회실패} 인데 .env 기대=${PROJECT_ACCOUNT_ID}.
+            둘 중 하나가 틀렸습니다 — 발급받은 키, 또는 .env 의 PROJECT_ACCOUNT_ID 를 확인하세요."
+    fi
+
+    # (E) 이 '스크립트의 남은 STEP(3~8)' 이 프로젝트 계정으로 돌게 한다.
+    #     부모 셸 자동 전환은 아래 install_hailcast_hook 가 담당(자식 export 는 부모에 안 남음).
+    export AWS_PROFILE=hailcast
+    rc=0; verify_project_account || rc=$?
+fi
+
+# ── 최종 판정 ─────────────────────────────────────────────
 case "$rc" in
-    0) success "  프로젝트 계정 확인 : ${CURRENT_ACCOUNT}" ;;
-    1) error "프로젝트 계정이 아닙니다. 현재 계정=${CURRENT_ACCOUNT} / 기대=${PROJECT_ACCOUNT_ID}
-            다른 계정의 자격증명이 잡혀 있습니다.
-            지금 무엇이 잡혀 있는지:  aws sts get-caller-identity
-            ⚠️ 환경변수(AWS_ACCESS_KEY_ID)는 프로필·[default] 보다 우선합니다.
-               설정돼 있다면:  unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN" ;;
-    *) error "AWS 자격증명 인증에 계속 실패합니다. 키를 확인하세요.
-            다시 등록:  aws configure" ;;
+    0) success "  프로젝트 계정 확인 : ${CURRENT_ACCOUNT}${AWS_PROFILE:+ (프로필 $AWS_PROFILE)}" ;;
+    *) error "AWS 계정 확인 실패. 현재=${CURRENT_ACCOUNT:-없음} / 기대=${PROJECT_ACCOUNT_ID}
+            지금 무엇이 잡혀 있는지:  aws sts get-caller-identity" ;;
 esac
 
 # region 이 서울이 아니면 경고
@@ -133,12 +224,10 @@ else
 fi
 
 # ── STEP 4 : kubectl (EKS 1.35 맞춤) ───────────────────────
-# 구글 공식 저장소에서 EKS 클러스터와 같은 마이너(1.35)의 최신 패치를 받는다.
-# (로컬 k8s 처럼 scp admin.conf 를 쓰지 않는다 — EKS 는 STEP 7 의 update-kubeconfig 로 붙는다)
 if [ "$KUBECTL_INSTALLED" = false ]; then
     info "STEP 4/8 : kubectl(${K8S_MINOR}.x) 설치 중..."
     KVER=$(curl -fsSL "https://dl.k8s.io/release/stable-${K8S_MINOR}.txt" 2>/dev/null || true)
-    [ -z "$KVER" ] && KVER="v${K8S_MINOR}.0"   # stable txt 미제공 시 fallback
+    [ -z "$KVER" ] && KVER="v${K8S_MINOR}.0"
     TMP_DIR=$(mktemp -d); trap 'rm -rf "$TMP_DIR"' EXIT; cd "$TMP_DIR"
     curl -fsSLO "https://dl.k8s.io/release/${KVER}/bin/linux/amd64/kubectl" || error "kubectl 다운로드 실패"
     chmod +x kubectl
@@ -164,13 +253,13 @@ fi
 # ── STEP 6 : Docker ────────────────────────────────────────
 if [ "$DOCKER_INSTALLED" = false ]; then
     info "STEP 6/8 : Docker 설치 중..."
-    sudo dnf remove -y podman buildah runc 2>/dev/null || true   # Rocky8 충돌 방지(수업: podman buildah)
+    sudo dnf remove -y podman buildah runc 2>/dev/null || true
     sudo dnf install -y yum-utils -q
     sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo -q 2>/dev/null || true
     sudo dnf makecache -q 2>/dev/null || true
     sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin -q || error "Docker 설치 실패"
     sudo systemctl enable --now docker
-    sudo usermod -aG docker "${SUDO_USER:-$USER}"                # root 오등록 방지
+    sudo usermod -aG docker "${SUDO_USER:-$USER}"
     command -v docker &>/dev/null && success "Docker 설치 완료: $(docker --version)" || error "Docker 설치 실패"
     warning "docker 그룹 적용을 위해 재로그인 또는 'newgrp docker' 필요"
 else
@@ -178,15 +267,9 @@ else
 fi
 
 # ── STEP 6.5 : Docker Hub 로그인 (공용 계정 hailscale · 토큰 파일 자동 생성) ────
-# 동작:
-#   - .dockerhub_token 이 없거나 비어 있으면 → 입력받아 생성(chmod 600)
-#   - 이미 값이 있으면 → 입력 건너뛰고 그대로 사용
-#   - proj-mgmt 는 공유 서버 → '공용 계정 hailscale' 아이디/PAT 를 1회 등록(개인 계정 아님)
-#   - 토큰 발급: hub.docker.com → Account settings → Personal access tokens
 info "STEP 6.5/8 : Docker Hub 로그인 확인 (공용 계정 hailscale)..."
 
-# 홈이 아닌 'project3-hailcast-ops 폴더' 내부에 저장(공용 계정 격리)
-OPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # scripts/ 의 상위 = 레포 루트
+OPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DOCKERHUB_TOKEN_FILE="${OPS_DIR}/.dockerhub_token"
 PROJECT_DOCKER_CONFIG="${OPS_DIR}/.docker_config"
 
@@ -212,16 +295,15 @@ else
     info "  .dockerhub_token 이미 설정됨 → 입력 건너뜀 ($DOCKERHUB_USER)"
 fi
 
-export DOCKERHUB_USER DOCKERHUB_TOKEN   # sg 서브셸 참조용
+export DOCKERHUB_USER DOCKERHUB_TOKEN
 if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
     mkdir -p "$PROJECT_DOCKER_CONFIG"
-    export DOCKER_CONFIG="$PROJECT_DOCKER_CONFIG"   # 공용 계정 격리 경로
+    export DOCKER_CONFIG="$PROJECT_DOCKER_CONFIG"
     if docker info &>/dev/null; then
         echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USER" --password-stdin \
             && success "Docker Hub 로그인됨: $DOCKERHUB_USER" \
             || warning "Docker Hub 로그인 실패 → 토큰 확인"
     elif id -nG "${SUDO_USER:-$USER}" | grep -qw docker; then
-        # 그룹은 추가됐으나 현재 셸 미반영 → sg 로 즉시 적용하여 로그인 (격리 경로 강제)
         sg docker -c "DOCKER_CONFIG='$PROJECT_DOCKER_CONFIG'; echo '$DOCKERHUB_TOKEN' | docker login -u '$DOCKERHUB_USER' --password-stdin" \
             && success "Docker Hub 로그인됨: $DOCKERHUB_USER" \
             || warning "Docker Hub 로그인 실패 → 재로그인 후 bash setup.sh 재실행"
@@ -231,10 +313,6 @@ if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
 fi
 
 # ── STEP 7 : EKS kubeconfig 연결 ───────────────────────────
-# EKS 는 로컬 k8s 처럼 admin.conf 를 scp 하지 않는다.
-# 아래 한 줄이 ~/.kube/config 를 자동 생성한다. 클러스터가 아직 apply 전이면 경고만 남기고 넘어간다.
-# (권한: 클러스터 '생성자' 만 자동 admin — bootstrap_cluster_creator_admin_permissions=true.
-#  생성자가 아닌 사람은 EKS access entry 에 등재돼야 kubectl 이 된다 — 규약서 §5-3)
 info "STEP 7/8 : EKS kubeconfig 연결 (${CLUSTER_NAME})..."
 if aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" &>/dev/null; then
     aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION" \
@@ -242,7 +320,7 @@ if aws eks describe-cluster --name "$CLUSTER_NAME" --region "$AWS_REGION" &>/dev
         || warning "update-kubeconfig 실패 → 자격증명/권한 확인"
 else
     warning "EKS 클러스터(${CLUSTER_NAME})가 아직 없음(apply 전이거나 권한 부족)."
-    echo "    apply 후 재실행:  aws eks update-kubeconfig --name ${CLUSTER_NAME} --region ${AWS_REGION}"
+    echo "    apply 후 재실행:  make kubeconfig   (또는 aws eks update-kubeconfig --name ${CLUSTER_NAME} --region ${AWS_REGION})"
 fi
 
 # ── STEP 8 : 최종 검증 ─────────────────────────────────────
@@ -257,51 +335,29 @@ command -v docker    &>/dev/null && echo "  │ ✅ Docker    : $(docker --versi
 echo "  └─────────────────────────────────────────┘"
 echo ""
 
+# ── 자동 전환 훅 설치 (AWS_PROFILE + DOCKER_CONFIG 통합) ────
+# 계정 일치 여부와 무관하게 항상 설치한다(멱등). 개인 default 가 곧 프로젝트 계정인
+# 사람([hailcast] 프로필 없음)에게는 훅이 AWS_PROFILE 을 건드리지 않는다(grep 로 존재 확인).
+install_hailcast_hook
+
 echo "============================================="
 success "환경 설치 완료!"
 echo "============================================="
 echo ""
 echo "  다음 단계:"
-echo "   1) docker 그룹 적용:   newgrp docker  (또는 재로그인)"
+echo "   1) docker 그룹 적용:   newgrp docker  (또는 재로그인) — setup 끝에 자동 진입 가능"
 echo "   2) AWS 자격증명:       프로젝트 계정(${CURRENT_ACCOUNT}) 확인됨"
-echo "                          → 자격증명 출처는 강제하지 않습니다(환경변수 · 프로필 · [default] 무엇이든)."
+echo "                          → 개인 [default] 는 보존, 프로젝트 작업은 [hailcast] 프로필."
+echo "                          → project3-hailcast 폴더에 들어가면 자동으로 [hailcast] 로 전환됨."
 echo "                          → make 는 매번 'guard-account' 로 계정을 대조합니다."
 echo "   3) Docker Hub :        setup.sh 중 입력한 공용(hailscale) 토큰으로 자동 로그인됨"
-echo "   4) EKS 연결:           apply 후  aws eks update-kubeconfig --name ${CLUSTER_NAME} --region ${AWS_REGION}"
+echo "   4) EKS 연결:           apply 후  make kubeconfig"
 echo "   5) 환경 점검:          make check"
 echo ""
 
-# ── 스마트 cd 자동 전환 (팀 전용 Docker Hub 계정 격리) ─────────────────────
-# 왜 필요한가: 각 개인 서버(mgmt·proj-mgmt)에는 이미 '개인' Docker Hub 로그인이
-#   ~/.docker/config.json 에 들어 있는 경우가 많다. 여기서 팀 공용(hailscale)으로 그냥
-#   docker login 하면 개인 로그인을 덮어쓴다. 그래서 이 ops 폴더 '안'에서만 전용 금고
-#   (.docker_config)를 바라보게 하고, 폴더를 '벗어나면' 개인 계정으로 복구한다.
-# 매칭 기준: 폴더 구조 통일 규칙에 따른 '이 레포의 실제 절대경로(OPS_DIR)'와 그 하위만.
-#   (문자열 '포함' 매칭이 아니라 정확한 경로 기준 → 우연한 이름 충돌 오작동 방지)
-if [ -d "$PROJECT_DOCKER_CONFIG" ]; then
-    if ! grep -qF "# hailcast-ops Docker Config 자동 격리 전환" ~/.bashrc; then
-        # OPS_DIR 은 setup 시점의 절대경로로 확장해 박고, $@·$PWD 는 런타임 확장되도록 이스케이프
-        cat >> ~/.bashrc << EOF
-
-# hailcast-ops Docker Config 자동 격리 전환 (제거하려면 이 함수 블록 전체를 지우면 됨)
-cd() {
-    builtin cd "\$@" || return
-    if [[ "\$PWD" == "${OPS_DIR}" || "\$PWD" == "${OPS_DIR}/"* ]]; then
-        export DOCKER_CONFIG="${OPS_DIR}/.docker_config"
-    else
-        unset DOCKER_CONFIG
-    fi
-}
-EOF
-        success "스마트 cd 격리 기능 주입 완료 (.bashrc) — 대상: ${OPS_DIR}"
-        info    "적용하려면 새 터미널을 열거나  source ~/.bashrc  실행"
-    else
-        info "이미 .bashrc 에 설정이 존재하여 건너뜁니다."
-    fi
-fi
-
 # ── (맨 마지막) docker 그룹 즉시 적용 ──────────────────────
 # ⚠️ newgrp 는 '새 셸 진입'이라 반드시 모든 작업의 맨 끝에 위치해야 한다.
+#    이 새 셸은 ~/.bashrc 를 다시 읽어 위 훅을 반영한다(현재 창에서도 자동 전환 체감).
 if [ -t 0 ] && command -v docker &>/dev/null && ! docker info &>/dev/null \
    && id -nG "${SUDO_USER:-$USER}" | grep -qw docker; then
     info "docker 그룹을 즉시 적용합니다 (새 셸 진입). 종료하려면 'exit' 입력 후 Enter."
