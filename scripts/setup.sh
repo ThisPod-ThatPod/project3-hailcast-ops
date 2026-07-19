@@ -44,20 +44,24 @@ error()   { echo -e "${RED}[ERROR]${NC}   $1"; exit 1; }
 #   · DOCKER_CONFIG : ops 폴더 안에서만 공용 금고(.docker_config)
 # 멱등 : 새 마커가 있으면 건너뛴다. 옛 'Docker 전용 cd 훅'이 있으면 제거 후 통합본으로 대체(이중 cd 방지).
 install_hailcast_hook() {
-    local OPS_DIR ROOT MARKER OLD_MARKER
+    local OPS_DIR ROOT MARKER OLD_MARKER OLD_MARKER2
     OPS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # scripts/ 의 상위 = ops 레포 루트
     ROOT="$(cd "$OPS_DIR/.." && pwd)"                            # 그 상위 = project3-hailcast 바구니
     MARKER="# hailcast 자동 전환 (AWS_PROFILE + DOCKER_CONFIG)"
     OLD_MARKER="# hailcast-ops Docker Config 자동 격리 전환"
+    OLD_MARKER2="# 특정 폴더 진입 시 Docker Config 자동 격리 전환"
 
     cp -f ~/.bashrc ~/.bashrc.hailcast.bak 2>/dev/null || true   # 안전 백업
 
     # 옛 docker 전용 훅 제거(마커 줄 ~ 첫 '}' 까지) → 이중 cd 정의 방지
-    if grep -qF "$OLD_MARKER" ~/.bashrc 2>/dev/null; then
-        awk -v m="$OLD_MARKER" 'index($0,m){s=1} s&&/^}/{s=0;next} !s' ~/.bashrc > ~/.bashrc.tmp \
-            && mv ~/.bashrc.tmp ~/.bashrc
-        info "옛 Docker 전용 cd 훅 제거 → 통합본으로 교체"
-    fi
+    # 마커가 프로젝트별로 다른 변종(hailcast-ops / 특정 폴더 진입 시)이 있어 둘 다 제거한다.
+    for _m in "$OLD_MARKER" "$OLD_MARKER2"; do
+        if grep -qF "$_m" ~/.bashrc 2>/dev/null; then
+            awk -v m="$_m" 'index($0,m){s=1} s&&/^}/{s=0;next} !s' ~/.bashrc > ~/.bashrc.tmp \
+                && mv ~/.bashrc.tmp ~/.bashrc
+            info "옛 cd 훅 제거 → 통합본으로 교체 ($_m)"
+        fi
+    done
 
     if grep -qF "$MARKER" ~/.bashrc 2>/dev/null; then
         info "자동 전환 훅 이미 설치됨 → 건너뜀"
@@ -75,13 +79,13 @@ cd() {
             export AWS_PROFILE=hailcast
             [ -n "\${AWS_ACCESS_KEY_ID:-}" ] && echo "⚠️  환경변수 자격증명이 프로필을 덮어씁니다 → unset 필요"
         fi
-    else
+    elif [ "\${AWS_PROFILE:-}" = "hailcast" ]; then
         unset AWS_PROFILE
     fi
     # Docker : ops 폴더 안에서만 공용 금고
     if [[ "\$PWD" == "$OPS_DIR" || "\$PWD" == "$OPS_DIR/"* ]]; then
         export DOCKER_CONFIG="$OPS_DIR/.docker_config"
-    else
+    elif [ "\${DOCKER_CONFIG:-}" = "$OPS_DIR/.docker_config" ]; then
         unset DOCKER_CONFIG
     fi
 }
@@ -150,13 +154,17 @@ info "STEP 2.5/8 : AWS 자격증명 확인 (프로젝트 계정)..."
 
 rc=0; verify_project_account || rc=$?
 
-# ── rc=2 : 자격증명 자체가 없음 → 먼저 등록 ───────────────
+# ── rc=2 : 자격증명 없음/만료/무효 → 개인 default 는 절대 안 건드리고 [hailcast] 로 통일 ──
 if [ "$rc" = "2" ]; then
-    warning "AWS 자격증명이 없거나 만료됐습니다 → 지금 등록합니다."
-    echo    "    입력값: Access Key / Secret Key / region=${AWS_REGION} / output=json"
-    aws configure
-    [ -z "$(aws configure get region 2>/dev/null)" ] && aws configure set region "$AWS_REGION"
-    [ -z "$(aws configure get output 2>/dev/null)" ] && aws configure set output json
+    [ -t 0 ] || error "비대화형 환경입니다(CI 등). 프로젝트 자격증명을 미리 주입하세요."
+    warning "유효한 프로젝트 자격증명이 없습니다 → 프로젝트 전용 [hailcast] 프로필로 등록합니다."
+    if ! aws configure list-profiles 2>/dev/null | grep -qx "hailcast"; then
+        echo "    팀 발급 키를 입력하세요 (region=${AWS_REGION}·output=json 자동 보정)"
+        aws configure --profile hailcast
+        aws configure --profile hailcast set region "$AWS_REGION"
+        aws configure --profile hailcast set output json
+    fi
+    export AWS_PROFILE=hailcast
     rc=0; verify_project_account || rc=$?
 fi
 
