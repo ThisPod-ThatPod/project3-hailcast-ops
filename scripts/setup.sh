@@ -212,7 +212,9 @@ fi
 case "$rc" in
     0) success "  프로젝트 계정 확인 : ${CURRENT_ACCOUNT}${AWS_PROFILE:+ (프로필 $AWS_PROFILE)}" ;;
     *) error "AWS 계정 확인 실패. 현재=${CURRENT_ACCOUNT:-없음} / 기대=${PROJECT_ACCOUNT_ID}
-            지금 무엇이 잡혀 있는지:  aws sts get-caller-identity" ;;
+            지금 무엇이 잡혀 있는지:  aws sts get-caller-identity
+            [hailcast] 프로필 키가 만료됐다면 재등록:  aws configure --profile hailcast
+            그 후 다시:  make setup" ;;
 esac
 
 # region 이 서울이 아니면 경고
