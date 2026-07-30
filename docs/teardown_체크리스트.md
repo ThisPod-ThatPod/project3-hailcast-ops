@@ -7,7 +7,11 @@
 > **[7/28 대개정] 0~5장은 7/7 EKS 실습 기준 범용 원리(그대로 유효, 보존). 6~9장에 이미선님 실전 런북 3종(destroy 관련정리·destroy 런북·재구축 런북, 2026-07-28)을 반영해 hailcast 4레포 실전 절차를 추가.**
 > **⚠️ 8/3 리허설 전 필독 — 조용빈님 지적:** 아래 7-3-2를 반드시 먼저 읽을 것. #58 머지로 `hailcast-rds-secret` 자동 생성 경로가 새로 생겨, 기존 런북의 "수동 kubectl create secret" 단계가 원칙적으로 불필요해졌을 가능성이 높다(단, 실제 자동 채워짐은 미검증 — 8/3에 확인).
 >
+> **[7/28 3차 개정] 실제 teardown 스크립트 4개(`ops/teardown.sh`·`manifests/teardown_manifest.sh`·`infra/teardown_infra.sh`·`app/teardown_app.sh`) 코드를 직접 검토해 10장에 연결. 치명 버그 1건(`app/teardown_infra.sh` 계정가드 함수명 오류)·설계 충돌 1건(같은 스크립트가 ArgoCD 관리 대상과 삭제 범위 중복) 발견 → 그룹 B 확인 요청 중. 위 4개 스크립트는 재작성본 배포 완료(9장 참고).**
+>
 > **[7/29 4차 개정 — 미선님 PR 리뷰 반영]** 10-2의 "계정가드 함수명 오류"는 **오탐이었음**(app 레포가 자체 `_lib.sh`를 갖고 있어 ops의 것과 대조한 제 착오). 10-4 "미해결"은 app #40으로 **이미 해결돼 있었음**("공식 경로는 manifests" 문서화). 10-1·10-3의 infra 스크립트 순서 서술을 PR#71 실제 반영 순서(계정→ALB→Karpenter→init→CUR)로 정정. `infra/teardown_infra.sh`는 이후 `terraform state list` 조회 실패를 빈 결과와 구분 못 하던 버그도 추가로 수정(2차 리뷰).
+>
+> **[7/30 5차 개정 — 용빈님 실행흐름 지적 반영]** `make destroy-all`(=`teardown.sh --yes`) 한 방이 **첫 실행에서 ②infra ALB 가드에서 의도적으로 exit 1 중단**되는 것이 정상임을, 처음 돌리는 사람이 "고장"으로 오해하지 않도록 **신설 10-2절에 3단계 실제 실행 흐름·권장 수동 절차·`plan -destroy` 리허설 분기를 명시.** 코드는 손대지 않음(용빈님 결론과 동일 — 이건 버그가 아니라 안전순서 강제). 기존 10-2~10-4 → 10-3~10-5로, 11장 → 12장으로 밀림.
 
 ---
 
@@ -139,7 +143,7 @@ aws ec2 delete-volume --volume-id <vol-id> --region $REGION                     
 - **`teardown.sh`**: ~~위 ①~⑤를 스크립트 한 방으로~~ → **구현 완료.** `ops/teardown.sh`가 manifest→infra→app 순서를 강제하고, 각 스캔이 비었는지는 `infra/teardown_infra.sh`의 CUR·ALB·Karpenter 3중 가드가 담당(10장).
 - **AWS Budgets 경보($50/$100/$150)**: teardown이 "능동 방어"라면 Budgets는 "안전망". destroy를 깜빡해도 임계 초과 시 알림. **(아직 구현 안 됨 — 개선과제로 유지)**
 - **AWS Instance Scheduler**: 개발/데모 시간(예 14~18시) 외 자동 종료로 상시 과금 최소화. **(아직 구현 안 됨 — 개선과제로 유지)**
-- **남은 것:** 스크립트는 다 있지만 **팀 게이트 5개(6장)를 아직 아무도 확정 안 함** — 코드가 완성돼도 게이트값(`ARGOCD_DELETE_PATH`·`CUR_HANDLING`)을 안 넣으면 안전하게 막히도록 설계했다(10-3절).
+- **남은 것:** 스크립트는 다 있지만 **팀 게이트 5개(6장)를 아직 아무도 확정 안 함** — 코드가 완성돼도 게이트값(`ARGOCD_DELETE_PATH`·`CUR_HANDLING`)을 안 넣으면 안전하게 막히도록 설계했다(10-4절).
 
 ---
 
@@ -354,9 +358,9 @@ kubectl -n hailcast create secret generic hailcast-rds-secret \
 | 5 | 배포팀 계정에 `secretsmanager:GetSecretValue`·`ssm:GetParameter` 권한이 있는지 | 8-3 수동 백업 경로 실행 권한 미확인 — 거부되면 인프라 담당이 대신 실행 |
 | ~~6~~ | ~~`ops scripts/teardown.sh`의 매니페스트 단계 호출부 전체~~ | **[3차 개정에서 해소]** 코드 직접 확인함 — manifest 단계는 CONFIRM을 주입하지 않고 각 스크립트 자체 기본값(미리보기)을 따름. 10장 참고 |
 | 6 | 8/3을 실제 destroy로 할지 `plan -destroy` 리허설로 할지 | **6장 게이트⑤와 동일 — 팀 결정 대기** |
-| ~~7~~ | ~~`app/scripts/teardown_infra.sh`의 존속 여부~~ | **[4차 개정에서 해소]** app #40이 "공식 경로는 manifests 레포"로 이미 문서화·경고 처리 완료. 10-4절 참고 |
+| ~~7~~ | ~~`app/scripts/teardown_infra.sh`의 존속 여부~~ | **[4차 개정에서 해소]** app #40이 "공식 경로는 manifests 레포"로 이미 문서화·경고 처리 완료. 10-5절 참고 |
 
-**남은 3개 결정 병목(재구축 쪽, 4·7-1·9-2절):** ① ArgoCD 설치 주체·명령, ② ESO CRD 매니페스트 주소, ③ 텔레그램 봇 토큰·채팅ID 보관처. 이 셋이 정해지기 전엔 "제3자가 이 문서만 보고 재구축"이 불가능합니다 — 평가표의 "제3자가 즉시 복제 가능한 운영지침서" 항목은 이 3개 병목 때문에 **8/4 전 완성은 무리**라는 게 이미선님 판단이고, 팀장도 동의합니다. → **개선기간(8/5~) 과제로 이관**을 권장합니다(11장 평가 매핑 갱신).
+**남은 3개 결정 병목(재구축 쪽, 4·7-1·9-2절):** ① ArgoCD 설치 주체·명령, ② ESO CRD 매니페스트 주소, ③ 텔레그램 봇 토큰·채팅ID 보관처. 이 셋이 정해지기 전엔 "제3자가 이 문서만 보고 재구축"이 불가능합니다 — 평가표의 "제3자가 즉시 복제 가능한 운영지침서" 항목은 이 3개 병목 때문에 **8/4 전 완성은 무리**라는 게 이미선님 판단이고, 팀장도 동의합니다. → **개선기간(8/5~) 과제로 이관**을 권장합니다(12장 평가 매핑 갱신).
 
 ---
 
@@ -378,37 +382,77 @@ ops/scripts/teardown.sh  (지휘자 — make destroy-all 이 이걸 부름)
   └─③ app      ──▶ app/scripts/teardown_app.sh
                     (로컬 도커 컨테이너·이미지·볼륨·캐시 정리 — 클라우드 무관)
 
-  [별도, 오케스트레이터 미편입] app/scripts/teardown_infra.sh  ← 10-4절, 존치·미편입으로 확정(app #40)
+  [별도, 오케스트레이터 미편입] app/scripts/teardown_infra.sh  ← 10-5절, 존치·미편입으로 확정(app #40)
 ```
 
 **전문가 관점 — 왜 `infra` 단계에만 `CONFIRM=yes`를 자동 주입하나:** manifest·app은 "미리보기만 하고 사람이 다시 확인 후 재실행"해도 비용 손해가 적지만(K8s 리소스 삭제 지연 정도), infra는 EKS·NAT·RDS라 **정말로 지우는 그 순간이 비용의 갈림길**입니다. 그래서 이 단계만 사람이 최상위 프롬프트(`y` 입력)에 동의하면 자동으로 실제 destroy까지 갑니다 — 대신 그 전에 CUR·ALB·Karpenter 3중 가드가 막아줍니다.
 
-### 10-2. 발견된 문제와 조치
+### 10-2. ⚠️ `make destroy-all` 한 방은 첫 실행에서 "정상적으로" 중단된다 — 처음 돌리는 사람 필독
+
+> **쉬운 설명:** `bash teardown.sh --yes` 하나로 다 지워질 것 같지만, **실제로는 중간에서 멈춥니다. 그리고 그 멈춤은 고장이 아니라 안전장치가 제대로 일한 것입니다.** 왜 그런지 모르고 돌리면 "스크립트가 깨졌다"고 오해하기 쉬워서, 실제 실행이 어떻게 흘러가는지 3단계로 미리 적어둡니다.
+
+**`bash scripts/teardown.sh --yes`를 처음 돌렸을 때 실제로 벌어지는 일:**
+
+```
+① manifest 단계 → CONFIRM이 주입되지 않음 → "미리보기만" 수행
+                   → ArgoCD Application이 실제로는 안 지워짐 → ALB가 살아있음
+② infra 단계    → CONFIRM=yes 주입됨 → ALB 가드가 "K8s가 만든 ALB가 아직 있다"를 발견
+                   → exit 1 로 의도적으로 중단  ← 여기서 멈춘다 (정상)
+③ app 단계     → ②에서 멈췄으므로 아예 도달 안 함
+```
+
+**왜 이게 버그가 아니라 설계인가:** manifest 단계에 CONFIRM을 자동 주입하면 "K8s 리소스가 사람 확인 없이 삭제"되는 더 위험한 상황이 됩니다(10-1 전문가 관점). 그래서 manifest는 일부러 미리보기에 머물고, 그 결과 ALB가 남고, infra의 ALB 가드가 그걸 잡아 멈추는 것 — **"K8s를 먼저 확실히 정리하지 않으면 인프라 destroy로 못 넘어간다"는 안전 순서(1장 원칙)를 코드가 강제**하는 것입니다.
+
+**그래서 실제로는 이렇게 3단계로 나눠서 돌린다(권장 절차):**
+
+```bash
+# ── 1단계: K8s 워크로드·ALB를 실제로 정리 (사람이 CONFIRM을 직접 준다) ──
+ARGOCD_DELETE_PATH=argocd \
+  CONFIRM=yes bash ../project3-hailcast-manifests/scripts/teardown_manifest.sh
+# → ALB·Ingress가 사라질 때까지 대기. 아래로 넘어가기 전 반드시 확인:
+kubectl get ingress -A ; aws elbv2 describe-load-balancers \
+  --region ap-northeast-2 --query 'LoadBalancers[].LoadBalancerName' --output text
+#   (위 두 줄이 비면 통과 — 안 비면 3분 더 기다렸다 재확인)
+
+# ── 2단계: 인프라 destroy (이제 ALB가 없으니 가드를 통과한다) ──
+CUR_HANDLING=keep bash scripts/teardown.sh --only infra --yes
+#   또는 infra 레포에서 직접:
+#   CUR_HANDLING=keep CONFIRM=yes bash ../project3-hailcast-infra/scripts/teardown_infra.sh
+
+# ── 3단계: 로컬 도커 정리 (클라우드 무관, 실패해도 안전) ──
+bash scripts/teardown.sh --only app --yes
+```
+
+**핵심:** `--yes` 한 방으로 끝나기를 기대하지 말고, **1단계(manifest)를 사람이 CONFIRM을 줘서 실제로 완료시킨 뒤** 2단계로 넘어가야 합니다. `teardown.sh --yes`를 그냥 돌리면 ②에서 멈추는 게 정상이며, 그때는 "1단계부터 수동으로 다시" 하면 됩니다. **`--only` 플래그로 단계를 하나씩 끊어 도는 게 8/3 리허설에서 가장 안전합니다.**
+
+> **8/3 리허설이 `plan -destroy`(읽기전용)라면:** 2단계에서 `CONFIRM=yes`를 **주지 않습니다.** 그러면 infra 스크립트가 `terraform destroy` 대신 `terraform plan -destroy`(미리보기)만 돌려서, 실제로는 아무것도 안 지우고 "순서·명령이 맞는지"만 검증할 수 있습니다(6장 게이트⑤).
+
+### 10-3. 발견된 문제와 조치
 
 | 심각도 | 스크립트 | 문제 | 조치 |
 | --- | --- | --- | --- |
 | ~~🔴 P0~~ | ~~`app/teardown_infra.sh`~~ | ~~존재하지 않는 함수 `guard_project_account()` 호출~~ | **[7/29 정정 — 오탐]** app 레포는 **자체 `scripts/_lib.sh:76`**에 `guard_project_account`를 별도로 정의해 그걸 source합니다. 제가 ops의 `_lib.sh`(`verify_project_account`)와 비교해서 "이름 불일치"로 잘못 판단했습니다 — 서로 다른 두 파일을 대조한 오류였습니다. 계정이 다르면 `_lib.sh:89`, 자격증명이 없으면 `:94`에서 정상적으로 `exit 1` 합니다. |
-| 🔴 P0 | `app/teardown_infra.sh` | `kubectl delete namespace hailcast`로 네임스페이스 전체 삭제 — 그 안 워크로드는 전부 ArgoCD GitOps 관리 대상이라 `manifests/teardown_manifest.sh`(Application 삭제)와 삭제 책임이 겹침. `selfHeal:true`인 상태에서 이 스크립트를 단독 실행하면 ArgoCD가 되살리려다 충돌 가능 | **이 항목은 그대로 성립**(app/scripts/teardown_infra.sh:58) — 10-4절에서 처리 결론 확정 |
-| 🟡 P1 | `infra/teardown_infra.sh` | ALB만 가드, **CUR 버킷·Karpenter 노드 가드 없음** → 실행하면 CUR 단계에서 즉사하거나 Karpenter 노드 잔존 상태로 destroy해 VPC 삭제가 막힘 | **재작성 완료·배포됨**(계정 가드 → ALB → Karpenter → `terraform init` → **CUR 가드**(init 이후로 배치, PR#71) → destroy) |
+| 🔴 P0 | `app/teardown_infra.sh` | `kubectl delete namespace hailcast`로 네임스페이스 전체 삭제 — 그 안 워크로드는 전부 ArgoCD GitOps 관리 대상이라 `manifests/teardown_manifest.sh`(Application 삭제)와 삭제 책임이 겹침. `selfHeal:true`인 상태에서 이 스크립트를 단독 실행하면 ArgoCD가 되살리려다 충돌 가능 | **이 항목은 그대로 성립**(app/scripts/teardown_infra.sh:58) — 10-5절에서 처리 결론 확정 |
 | 🟡 P1 | `manifests/teardown_manifest.sh` | 실 삭제 명령 4줄이 주석 처리 + 주석 내용 자체가 실제 결정과 다름(`hailcast` root Application이 아니라 실제 이름은 `hailcast-root`, helm 릴리스 방식 아님) | **재작성 완료·배포됨**(파일명 동일, `ARGOCD_DELETE_PATH` 분기 반영) |
+| 🟡 P1 | `infra/teardown_infra.sh` | ALB만 가드, **CUR 버킷·Karpenter 노드 가드 없음** → 실행하면 CUR 단계에서 즉사하거나 Karpenter 노드 잔존 상태로 destroy해 VPC 삭제가 막힘 | **재작성 완료·배포됨**(계정 가드 → ALB → Karpenter → `terraform init` → **CUR 가드**(init 이후로 배치, PR#71) → destroy) |
 | 🟢 P2 | `app/teardown_app.sh`·`manifests/teardown_manifest.sh` | `set -u`만 쓰고 `set -e`가 없어 중간 실패가 조용히 넘어갈 수 있음 | **재작성본에서 `FAILED` 플래그로 실패를 누적해 최종 종료코드에 반영**(단, `-e`를 그대로 켜면 "이미 없는 리소스" 같은 정상 케이스까지 죽어서 의도적으로 유지) |
 | ⚪ 정보 | `ops/teardown.sh` | 설계 자체는 양호(계정가드 최우선, 단계별 확인 프롬프트, `--only`/`--yes` 옵션) | **게이트값(`ARGOCD_DELETE_PATH`·`CUR_HANDLING`) 하위 스크립트 전달 기능만 추가**해 재배포 |
 
-### 10-3. 재작성본 — 4개 스크립트 전부 배포 완료
+### 10-4. 재작성본 — 4개 스크립트 전부 배포 완료
 
 원본 파일명 그대로 교체 가능합니다. 핵심 변경점만 요약:
 
 - **`teardown_manifest.sh`**: `ARGOCD_DELETE_PATH=argocd|kubectl`로 경로 분기(기본 kubectl). 경로 A는 `hailcast-root`(실제 이름) cascade 삭제. 경로 B는 `kubectl -n argocd delete application --all` + finalizer 없는 7종 경고. 클러스터 컨텍스트가 `hailcast`를 안 포함하면 사전 경고.
 - **`teardown_infra.sh`**: 계정 가드(단독 실행 대비, `ops/_lib.sh` 존재 시 사용) → **ALB 가드** → **Karpenter 노드 가드**(신규) → `terraform init` → **CUR 버킷 가드**(`CUR_HANDLING` 미설정이면 무조건 중단, `state rm`은 backend 초기화가 전제라 `init` 뒤로 배치 — PR#71 이미선 리뷰 반영) → `terraform destroy`.
 - **`teardown_app.sh`**: 컨테이너 정지→이미지→볼륨→빌드캐시 순서로 확장(기존엔 컨테이너 정지 단계가 없어 실행 중인 컨테이너가 이미지를 물고 있으면 완전 정리가 안 됐음).
-- **`teardown.sh`**(ops): `ARGOCD_DELETE_PATH`·`CUR_HANDLING`을 최상단에서 `export`해 manifest·infra 단계에 자동 전달. `app/teardown_infra.sh`를 의도적으로 미편입 처리하고 그 사유를 파일 안에 명문화(10-4절과 동일 내용).
+- **`teardown.sh`**(ops): `ARGOCD_DELETE_PATH`·`CUR_HANDLING`을 최상단에서 `export`해 manifest·infra 단계에 자동 전달. `app/teardown_infra.sh`를 의도적으로 미편입 처리하고 그 사유를 파일 안에 명문화(10-5절과 동일 내용).
 
 **실행 한 줄 예시(6장 게이트 ①②③④⑤ 전부 확정 후):**
 ```bash
 ARGOCD_DELETE_PATH=argocd CUR_HANDLING=keep bash scripts/teardown.sh --yes
 ```
 
-### 10-4. ✅ 해결됨 — `app/teardown_infra.sh` 존속 여부 (app #40으로 확정)
+### 10-5. ✅ 해결됨 — `app/teardown_infra.sh` 존속 여부 (app #40으로 확정)
 
 **[7/29 갱신]** 아래 세 갈래((a)삭제/(b)개명/(c)편입) 중 어느 것도 아니었습니다 — **"존치하되 공식 경로에서 제외"**로 이미 결론이 나 있었습니다.
 
@@ -419,13 +463,13 @@ app 레포 **#40**이 `scripts/README.md`·`Makefile`에 "**EKS 워크로드 정
 **참고로 남겨두는 질의 이력(2026-07-28, 재혁님·창원님께 발송):**
 1. ArgoCD 붙기 전 임시 스크립트였는지, 지금도 실제로 쓰는지
 2. 쓴다면 ArgoCD가 관리 안 하는 별도 대상이 있는지
-3. ~~`guard_project_account()` 함수명 불일치를~~ → **[7/29 정정] 이 항목은 애초에 문제가 아니었음(10-2절 참고, app 자체 `_lib.sh`가 정상 존재)**
+3. ~~`guard_project_account()` 함수명 불일치를~~ → **[7/29 정정] 이 항목은 애초에 문제가 아니었음(10-3절 참고, app 자체 `_lib.sh`가 정상 존재)**
 
 **전문가 관점 — 이게 왜 여전히 기록할 가치가 있는가:** 결과적으로 버그는 없었지만, "삭제 책임이 겹치는 스크립트가 죽은 코드로 남아있다"는 구조 자체는 여전히 리스크입니다. `README.md`·`Makefile` 경고문이 실제로 팀원이 실수로 단독 실행하는 걸 막아주는지는 사람이 그 경고를 읽어야만 작동하는 방어라, 8/3 리허설 때 "혹시 이 스크립트를 실행한 사람 있는지" 한 번 구두로 확인하는 걸 권장합니다.
 
 ---
 
-## 11. 평가표 연결
+## 12. 평가표 연결
 
 - 🎯 **완성도(25):** provision뿐 아니라 **깔끔한 teardown + 잔여 검증**까지 = 인프라 성숙도.
 - 🎯 **전문성(30):** 고아 리소스 의존성 추적(`describe-network-interfaces`)·복구 = 실전 트러블슈팅 역량. + **CUR 버킷 의존성 순서, finalizer 유무에 따른 삭제 경로 분기**(7장) + **실제 셸 스크립트 코드 리뷰로 계정가드 버그·설계 충돌을 사전에 잡아낸 것**(10장)까지 실전 트러블슈팅 역량으로 어필 가능.
@@ -437,3 +481,4 @@ app 레포 **#40**이 `scripts/README.md`·`Makefile`에 "**EKS 워크로드 정
 *2026-07-28 대개정 — 이미선님 실전 런북 3종 반영, 조용빈님 #58 검토 코멘트 반영*
 *2026-07-28 3차 개정 — 실제 teardown 스크립트 4종 코드 리뷰·재작성본 배포, `app/teardown_infra.sh` 존속 여부는 그룹 B 확인 대기 중*
 *2026-07-29 4차 개정 — 미선님 PR 리뷰 2건 반영: 10장 오탐 정정(계정가드 정상), 10-4 해결 확정(app #40), infra 스크립트 순서 서술 실물 동기화*
+*2026-07-30 5차 개정 — 용빈님 지적 반영: teardown.sh 첫 실행이 infra ALB 가드에서 정상 중단됨을 10-2절에 명시(3단계 수동 실행 흐름·plan -destroy 리허설 분기 포함), 코드 무변경*
