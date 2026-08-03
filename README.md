@@ -190,11 +190,12 @@ ops 는 **배포 대상이 아니라 운영 도구**이고 사실상 팀장 단�
 | `make kubeconfig` | EKS kubeconfig 갱신(apply 후) |
 | `make infra-plan` / `infra-apply` / `infra-destroy` | infra 레포 위임 |
 | `make app-build-push` | app 레포 위임(ECR push) |
+| `make install-argocd` | manifests 레포 위임 — Argo CD 최초 설치(재구축 시 `deploy` 선행조건) |
 | `make deploy` | manifests 레포 위임(helm/argocd) |
 | `make destroy-all` | ⚠️ 전체 정리 지휘(manifest→infra→app · 단계별 y/N 확인) — **y 누르면 실제 삭제됨** |
 | `make destroy-all-yes` | ⚠️ 전체 정리(확인 생략) — **실제로 전부 삭제됨. 미리보기 아님.** |
 
-> 위임(`infra-*`·`app-*`·`deploy`) 명령은 각 레포에 Makefile 이 있어야 동작합니다(각 레포 Makefile 추가 후 활성).
+> 위임(`infra-*`·`app-*`·`install-argocd`·`deploy`) 명령은 형제 레포의 Makefile 을 부릅니다. infra·app·manifests 세 레포 모두 있습니다.
 
 ---
 
@@ -215,7 +216,7 @@ ops 는 **배포 대상이 아니라 운영 도구**이고 사실상 팀장 단�
 | **런타임** | `aws describe` 로 **실물** | 필요 | apply 이후(없으면 건너뜀) |
 
 **둘은 다른 질문에 답합니다.** 정적은 "코드에 그렇게 써 있나", 런타임은 "실제로 그렇게 만들어졌나".
-IRSA 가 코드엔 7종 선언돼 있어도 `enable_app_irsa` 가 꺼져 있으면 실물은 2종입니다. 그 차이가 런타임 단계에서 드러납니다.
+IRSA 가 코드엔 10종 선언돼 있어도 `enable_app_irsa` 가 꺼져 있으면 실물은 2종(`lbctrl`·`monitoring`)입니다. 그 차이가 런타임 단계에서 드러납니다.
 
 ### 검사 항목
 
@@ -223,7 +224,7 @@ IRSA 가 코드엔 7종 선언돼 있어도 `enable_app_irsa` 가 꺼져 있으�
 - 프라이빗 서브넷·**노드 SG** 의 `karpenter.sh/discovery` 태그 · **값이 `hailcast-dev` 인가** (§6-1)
 - `kubernetes.io/role/elb` · `internal-elb` (§6-1)
 - RDS 5432 인바운드가 **SG 참조**인가 (CIDR 아님 · §5-5)
-- IRSA 7종의 **역할키 ↔ ServiceAccount** (§5-3)
+- IRSA 10종의 **역할키 ↔ ServiceAccount** (§5-3)
 
 **사고 방지 (매 PR 수동 점검을 자동화)**
 - `sqs:PurgeQueue` 권한 금지 — 붙으면 시연 중 큐가 비어 스케일링이 무너집니다. **`sqs:*` 처럼 와일드카드로 포함되는 경우도 잡습니다**
@@ -248,7 +249,7 @@ IRSA 가 코드엔 7종 선언돼 있어도 `enable_app_irsa` 가 꺼져 있으�
 
 - **`kubernetes.io/cluster/<클러스터> = shared` 태그** — **레거시라 검사하지 않습니다.**
   AWS 공식 문서상 EKS 는 **1.19+ 부터 이 태그를 서브넷에 붙이지 않고**, 이걸 요구하는 건 **AWS Load Balancer Controller 2.1.1 '이하'** 뿐입니다. 그 위 버전은 "태그를 지워도 서비스가 끊기지 않는다" 고 문서가 명시합니다. 서브넷 발견은 `kubernetes.io/role/elb`·`internal-elb` 가 담당하고 그건 위에서 검사합니다.
-  → 규약서 §6-1 에서 이 항목을 빼는 **개정을 짝 PR 로** 올립니다.
+  → 규약서 §6-1 개정 완료. 서브넷의 `= shared` 는 붙이지 않고, 살아 있는 것은 Karpenter 가 만든 노드의 `= owned` 라고 갈라 적혀 있습니다.
 
 ### 알려진 한계 (확인한 것만 적습니다)
 
