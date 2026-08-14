@@ -13,7 +13,9 @@
 >
 > **[7/30 5차 개정 — 용빈님 실행흐름 지적 반영]** `make destroy-all`(=`teardown.sh --yes`) 한 방이 **첫 실행에서 ②infra ALB 가드에서 의도적으로 exit 1 중단**되는 것이 정상임을, 처음 돌리는 사람이 "고장"으로 오해하지 않도록 **신설 10-2절에 3단계 실제 실행 흐름·권장 수동 절차·`plan -destroy` 리허설 분기를 명시.** 코드는 손대지 않음(용빈님 결론과 동일 — 이건 버그가 아니라 안전순서 강제). 기존 10-2~10-4 → 10-3~10-5로, 11장 → 12장으로 밀림.
 >
-> **[8/13 6차 개정 — 2026-08-03 실제 destroy 결과 반영]** 6장 게이트 5개 중 4개(①②③⑤)가 8/3에 실제로 정해졌다. 7-6절 destroy 소요시간 추정치를 실측값으로 교체(전체 21분 40초 · 자원별 표 · CloudFront 추정 "10분 이상"을 실측 3분 14초로 정정). 9장의 항목 1·6을 해소로 갱신. 재구축(8장·9장 병목 3개) 쪽은 이번 개정에 포함하지 않는다 — 별도 검증 후 반영 예정.
+> **[8/13 6차 개정 — 2026-08-03 실제 destroy 결과 반영]** 6장 게이트 5개 중 4개(①②③⑤)가 8/3에 실제로 정해졌다. 7-6절 destroy 소요시간 추정치를 실측값으로 교체(전체 21분 40초 · 자원별 표 · CloudFront 추정 "10분 이상"을 실측 3분 14초로 정정). 9장의 항목 1·6을 해소로 갱신.
+>
+> **[8/13 7차 개정 — 재구축 절차를 별도 문서로 분리 + 병목 갱신]** 재구축(옛 8~9장 일부) 절차가 이 문서 범위를 벗어난다고 판단해 `docs/재구축_체크리스트.md`로 옮겼다. 옮기면서 8-3절 ESO CRD 매니페스트 주소를 확정(manifests targetRevision 2.5.0 대조로 직접 확인)하고, 8-4절을 신설해 CUR 버킷 이관·정의 재생성 절차와 cur.tf가 버킷을 조건 없이 선언해 다음 apply 때 고아 버킷이 생길 수 있는 문제(용빈님 발견)를 반영했다. 같은 날 CLI로 만든 CUR 정의(옛 버킷 대상)와 이 절차가 충돌할 수 있어 처리 방식은 아직 미정. 재구축 쪽 "남은 병목"은 3개 → 2개로 갱신.
 
 ---
 
@@ -300,75 +302,16 @@ tfstate 버킷(`hailcast-dev-tfstate-7dde`) · EC2 Spot 서비스 연결 역할 
 
 ---
 
-## 8. ⭐ 실전 재구축 절차 요약 — 배포팀 10줄 + hailcast-rds-secret 자동화 갱신
+## 8~9. 재구축 절차 — 별도 문서로 이동
 
-> **쉬운 설명:** destroy로 인프라를 다 지우면, Terraform으로 다시 세운 리소스들은 **이름은 같아도 내부 ID가 다시 뽑힙니다**(주민번호는 같은데 카드번호가 재발급되는 느낌). 매니페스트에 그 ID를 문자 그대로 박아둔 곳이 있어서, 그 자리만 새 값으로 바꿔주면 됩니다. 안 바꾸는 값(IRSA ARN, SQS URL, ECR 주소 등)은 **이름으로 정해지는 값이라 재구축해도 그대로**입니다.
+**2026-08-13부로 `docs/재구축_체크리스트.md`로 옮겼다.** 배포팀 10줄·재구축 순서·hailcast-rds-secret·CUR 버킷 이관 절차가 그 문서에 있다.
 
-### 8-1. 재구축 시 고쳐야 하는 배포팀 10줄 (인프라가 값을 전달)
+destroy 전 게이트④(ArgoCD 설치 주체, 아래 §6)는 재구축에서 실제로 쓰인다.
 
-| 값 | 받는 곳(manifests) | 안 고치면 |
-| --- | --- | --- |
-| ACM 인증서 ARN (`alb_certificate_arn`) | `apps/call-api/ingress.yaml:19` · `apps/frontend/ingress.yaml:15` · `apps/predict/ingress.yaml:11` | 없는 인증서 지목 → HTTPS 리스너 안 붙음 |
-| VPC ID (`vpc_id`) | `addons/aws-load-balancer-controller/values.yaml:3`의 `vpcId` | 컨트롤러가 없는 VPC 지목 → ALB 자체가 안 생김 |
-| RDS 마스터 시크릿 ARN (`rds_master_secret_arn`) | `platform/external-secrets/externalsecret-rds-credentials.yaml:19,23` | ESO가 없는 시크릿 조회 → 계속 실패(단, Merge 정책이라 파드 자체는 뜸 — 로테이션만 안 반영) |
-| S3 버킷 이름 (`model_bucket_name`) | `apps/predict·call-api·simulator·weather-cron/deployment.yaml` 4곳 | `NoSuchBucket` |
-
-**바뀌지 않아 손댈 필요 없는 것(재확인):** IRSA 역할 ARN 9곳, SQS 큐 URL 3곳, ECR 주소, EKS 클러스터 이름, EC2NodeClass 셀렉터, 네임스페이스·ServiceAccount·ScaledObject 이름.
-
-### 8-2. 재구축 순서 뼈대
-```
-1) infra: alb_dns_name=""로 리셋 → 첫 apply(로컬·사람이 직접 — CI가 먼저 하면 사람이 kubectl 못 씀)
-2) infra: output 4종을 배포팀에 전달, kubeconfig 재발급
-3) 배포팀: ArgoCD 설치(주체 미정 — 게이트④)
-4) 배포팀: 위 8-1 10줄 반영 + PR + 머지 → Application 전부 Synced/Healthy 확인
-5) 앱팀: 이미지 6종 재빌드(★ dev push 아니라 workflow_dispatch로 — push면 바뀐 서비스만 빌드돼 나머지가 ImagePullBackOff)
-6) 인프라: IAM 콘솔 수동 정책의 버킷 접미사 교체 (앱팀 모델 업로드보다 먼저!)
-7) 앱팀: model.pkl·metadata.json 재업로드
-8) 배포팀: Ingress 올림 → 인프라: alb_dns_name에 새 ALB 주소 넣어 2차 apply(CloudFront 생성)
-9) 완료 확인: 노드 Ready·파드 Running·Application 전부 Healthy·plan No changes·서비스 URL 200
-```
-
-### 8-3. 🔴 `hailcast-rds-secret` — #58 머지로 절차가 바뀜 (조용빈님 지적 반영)
-
-**기존 런북(2026-07-28 오전 기준) 서술:**
-> "자동으로 안 생긴다. 반드시 둘 다 해야 한다 — ① ESO CRD 설치, ② `kubectl create secret`으로 수동 생성"
-
-**변경된 사실 (같은 날 오후 #58 머지 — `feature/rds-secret-placeholder`):**
-- `manifests platform/external-secrets/secret-rds-placeholder.yaml`이 **sync-wave `-1`**로 들어와, ExternalSecret(기본 wave 0)보다 먼저 **빈 Secret을 자동 생성**한다.
-- ExternalSecret 2개(`creationPolicy: Merge`)가 그 빈 Secret에 `DB_USER`·`DB_PASSWORD`·`DB_HOST` 키를 자동으로 채워 넣는다.
-
-**그래서 절차가 이렇게 바뀝니다:**
-
-| 단계 | 기존(오전) | 갱신(#58 반영) |
-| --- | --- | --- |
-| ① ESO CRD 설치 | 필요 | **여전히 필요**(자동 경로에서도 CRD 없으면 ExternalSecret 리소스 자체가 안 만들어짐 — 주소는 게이트④와 별개 미정 항목) |
-| ② 수동 `kubectl create secret` | 필요 | **원칙적으로 불필요할 가능성 높음** — 다만 "실제로 자동 채워지는지"는 **미검증**(이 자동 경로가 빈 클러스터에서 검증된 적이 없고, 8/3 재구축이 첫 실행) |
-
-**8/3 리허설에서 반드시 확인:**
-```bash
-kubectl -n argocd get application platform-secrets            # Synced인지 먼저
-kubectl -n hailcast get secret hailcast-rds-secret -o jsonpath='{.data}' | jq 'keys'
-# 기대값: ["DB_HOST","DB_PASSWORD","DB_USER"]  ← 이 셋이 다 나오면 수동 생성 생략
-kubectl -n hailcast get externalsecret                         # rds-credentials·rds-endpoint 둘 다 SecretSynced
-```
-**키가 비어 있거나 SecretSynced가 아닐 때만** 아래 수동 patch를 백업으로 실행(비용관리.md `:241`·`:261` 절 참조, `create`가 아니라 `patch`인 이유는 빈 Secret이 이미 있기 때문):
-```bash
-RDS_SECRET="$(terraform -chdir=envs/dev output -raw rds_master_secret_arn)"
-CRED="$(aws secretsmanager get-secret-value --secret-id "$RDS_SECRET" --query SecretString --output text)"
-kubectl -n hailcast create secret generic hailcast-rds-secret \
-  --from-literal=DB_HOST="$(aws ssm get-parameter --name /hailcast/dev/rds/endpoint --query Parameter.Value --output text)" \
-  --from-literal=DB_USER="$(echo "$CRED" | jq -r .username)" \
-  --from-literal=DB_PASSWORD="$(echo "$CRED" | jq -r .password)" \
-  --dry-run=client -o yaml | kubectl apply -f -
-```
-
-**전문가 관점 — 왜 이게 "최악은 아니다"인가:** 조용빈님 말대로, 자동 생성이 실패해도 수동 백업 절차가 그대로 유효해서 **파드가 못 뜨는 상황 자체는 안 생깁니다.** 문제는 "8/3에 팀원이 이제는 불필요할 수도 있는 수동 명령을 기계적으로 실행"하는 비효율 + "런북이 최신 상태를 못 따라간다"는 **이번 주 계속 반복된 패턴**이 재현된 것 — 그래서 이 체크리스트 자체를 문서 갱신 시점마다 반드시 재검증해야 합니다(9장 참조).
-
----
-
-## 9. ⭐ 확인 안 된 것 (8/3 리허설에서 채울 빈칸)
+## 9. ⭐ 확인 안 된 것 — destroy 쪽 (8/3 리허설에서 채울 빈칸)
 
 이 항목들은 **팀이 실제로 해보기 전에는 답을 낼 수 없는 것들**입니다. 리허설 중 관찰한 값을 이 표에 채워 넣습니다.
+재구축 쪽 항목(2~5번, 병목 요약)은 `docs/재구축_체크리스트.md` §9로 옮겼다.
 
 | # | 항목 | 왜 모르나 |
 | --- | --- | --- |
@@ -380,8 +323,6 @@ kubectl -n hailcast create secret generic hailcast-rds-secret \
 | ~~6~~ | ~~`ops scripts/teardown.sh`의 매니페스트 단계 호출부 전체~~ | **[3차 개정에서 해소]** 코드 직접 확인함 — manifest 단계는 CONFIRM을 주입하지 않고 각 스크립트 자체 기본값(미리보기)을 따름. 10장 참고 |
 | ~~6~~ | ~~8/3을 실제 destroy로 할지 `plan -destroy` 리허설로 할지~~ | **[8/13 6차 개정에서 해소]** 실제 destroy로 진행함(`CONFIRM=yes`). 6장 게이트⑤ 갱신 |
 | ~~7~~ | ~~`app/scripts/teardown_infra.sh`의 존속 여부~~ | **[4차 개정에서 해소]** app #40이 "공식 경로는 manifests 레포"로 이미 문서화·경고 처리 완료. 10-5절 참고 |
-
-**남은 3개 결정 병목(재구축 쪽, 4·7-1·9-2절):** ① ArgoCD 설치 주체·명령, ② ESO CRD 매니페스트 주소, ③ 텔레그램 봇 토큰·채팅ID 보관처. 이 셋이 정해지기 전엔 "제3자가 이 문서만 보고 재구축"이 불가능합니다 — 평가표의 "제3자가 즉시 복제 가능한 운영지침서" 항목은 이 3개 병목 때문에 **8/4 전 완성은 무리**라는 게 이미선님 판단이고, 팀장도 동의합니다. → **개선기간(8/5~) 과제로 이관**을 권장합니다(12장 평가 매핑 갱신).
 
 ---
 
@@ -494,7 +435,7 @@ app 레포 **#40**이 `scripts/README.md`·`Makefile`에 "**EKS 워크로드 정
 
 - 🎯 **완성도(25):** provision뿐 아니라 **깔끔한 teardown + 잔여 검증**까지 = 인프라 성숙도.
 - 🎯 **전문성(30):** 고아 리소스 의존성 추적(`describe-network-interfaces`)·복구 = 실전 트러블슈팅 역량. + **CUR 버킷 의존성 순서, finalizer 유무에 따른 삭제 경로 분기**(7장) + **실제 셸 스크립트 코드 리뷰로 계정가드 버그·설계 충돌을 사전에 잡아낸 것**(10장)까지 실전 트러블슈팅 역량으로 어필 가능.
-- 🎯 **개선과제(10):** teardown 자동화 스크립트(→ 대부분 구현·검증 완료, 남은 건 팀 게이트 확정뿐) + Budgets/Scheduler 연동(미구현) + **"제3자 즉시 복제 가능 수준"의 완전한 운영지침서**(9장 3개 병목 해소 — ArgoCD 설치 자동화, ESO CRD 주소 고정, 시크릿 보관 정책) + **`app/teardown_infra.sh` 존속 여부 확정 및 필요 시 오케스트레이터 정식 편입**.
+- 🎯 **개선과제(10):** teardown 자동화 스크립트(→ 대부분 구현·검증 완료, 남은 건 팀 게이트 확정뿐) + Budgets/Scheduler 연동(미구현) + **"제3자 즉시 복제 가능 수준"의 완전한 운영지침서**(`docs/재구축_체크리스트.md` §9 — "제3자 재구축" 병목 2개 해소 필요 + 별도로 cur.tf 처리 방식 1개, 총 3개. ESO CRD 주소 고정은 8/13 완료) + **`app/teardown_infra.sh` 존속 여부 확정 및 필요 시 오케스트레이터 정식 편입**.
 
 ---
 
@@ -503,3 +444,5 @@ app 레포 **#40**이 `scripts/README.md`·`Makefile`에 "**EKS 워크로드 정
 *2026-07-28 3차 개정 — 실제 teardown 스크립트 4종 코드 리뷰·재작성본 배포, `app/teardown_infra.sh` 존속 여부는 그룹 B 확인 대기 중*
 *2026-07-29 4차 개정 — 미선님 PR 리뷰 2건 반영: 10장 오탐 정정(계정가드 정상), 10-4 해결 확정(app #40), infra 스크립트 순서 서술 실물 동기화*
 *2026-07-30 5차 개정 — 용빈님 지적 반영: teardown.sh 첫 실행이 infra ALB 가드에서 정상 중단됨을 10-2절에 명시(3단계 수동 실행 흐름·plan -destroy 리허설 분기 포함), 코드 무변경*
+*2026-08-13 6차 개정 — 2026-08-03 실제 destroy 결과 반영: 6장 게이트 4개 확정, 7-6절 소요시간 실측(21분 40초), 9장 항목 1·6 해소*
+*2026-08-13 7차 개정 — 재구축 절차(옛 8~9장 일부)를 `docs/재구축_체크리스트.md`로 분리. ESO CRD 주소 확정, CUR 버킷 이관 절차(8-4)와 cur.tf 무조건 선언 문제 반영은 새 문서에 있음*
