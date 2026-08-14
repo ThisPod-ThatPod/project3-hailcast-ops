@@ -195,7 +195,7 @@ ops 는 **배포 대상이 아니라 운영 도구**이고 사실상 팀장 단�
 | `make destroy-all` | ⚠️ 전체 정리 지휘(manifest→infra→app · 단계별 y/N 확인) — **y 누르면 실제 삭제됨** |
 | `make destroy-all-yes` | ⚠️ 전체 정리(확인 생략) — **실제로 전부 삭제됨. 미리보기 아님.** |
 
-> 위임(`infra-*`·`app-*`·`install-argocd`·`deploy`) 명령은 형제 레포의 Makefile 을 부릅니다. infra·app·manifests 세 레포 모두 있습니다.
+> 위임(`infra-*`·`app-*`·`install-argocd`·`deploy`) 명령은 형제 레포의 Makefile 을 부릅니다. `infra-*` 는 infra, `app-*` 는 app, `install-argocd`·`deploy` 는 manifests 레포로 갑니다. `install-argocd` 타겟 자체는 manifests 에만 있습니다.
 
 ---
 
@@ -249,7 +249,7 @@ IRSA 가 코드엔 10종 선언돼 있어도 `enable_app_irsa` 가 꺼져 있으
 
 - **`kubernetes.io/cluster/<클러스터> = shared` 태그** — **레거시라 검사하지 않습니다.**
   AWS 공식 문서상 EKS 는 **1.19+ 부터 이 태그를 서브넷에 붙이지 않고**, 이걸 요구하는 건 **AWS Load Balancer Controller 2.1.1 '이하'** 뿐입니다. 그 위 버전은 "태그를 지워도 서비스가 끊기지 않는다" 고 문서가 명시합니다. 서브넷 발견은 `kubernetes.io/role/elb`·`internal-elb` 가 담당하고 그건 위에서 검사합니다.
-  → 규약서 §6-1 개정 완료. 서브넷의 `= shared` 는 붙이지 않고, 살아 있는 것은 Karpenter 가 만든 노드의 `= owned` 라고 갈라 적혀 있습니다.
+  → 규약서 §6-1 에 서브넷의 `= shared` 는 붙이지 않는다는 서술이 이미 있습니다(살아 있는 것은 Karpenter 가 만든 노드의 `= owned`). "런타임 생성 규칙은 규약서에 단정하지 않는다" 는 서술 원칙은 infra #78 로 dev 반영 완료(main 병합 대기).
 
 ### 알려진 한계 (확인한 것만 적습니다)
 
