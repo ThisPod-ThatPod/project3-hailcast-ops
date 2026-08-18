@@ -216,7 +216,7 @@ ops 는 **배포 대상이 아니라 운영 도구**이고 사실상 팀장 단�
 | **런타임** | `aws describe` 로 **실물** | 필요 | apply 이후(없으면 건너뜀) |
 
 **둘은 다른 질문에 답합니다.** 정적은 "코드에 그렇게 써 있나", 런타임은 "실제로 그렇게 만들어졌나".
-IRSA 가 코드엔 10종 선언돼 있어도 `enable_app_irsa` 가 꺼져 있으면 실물은 2종(`lbctrl`·`monitoring`)입니다. 그 차이가 런타임 단계에서 드러납니다.
+IRSA 가 코드엔 11종 선언돼 있어도 `enable_app_irsa` 가 꺼져 있으면 실물은 2종(`lbctrl`·`monitoring`)입니다. 그 차이가 런타임 단계에서 드러납니다.
 
 ### 검사 항목
 
@@ -224,7 +224,7 @@ IRSA 가 코드엔 10종 선언돼 있어도 `enable_app_irsa` 가 꺼져 있으
 - 프라이빗 서브넷·**노드 SG** 의 `karpenter.sh/discovery` 태그 · **값이 `hailcast-dev` 인가** (§6-1)
 - `kubernetes.io/role/elb` · `internal-elb` (§6-1)
 - RDS 5432 인바운드가 **SG 참조**인가 (CIDR 아님 · §5-5)
-- IRSA 10종의 **역할키 ↔ ServiceAccount** (§5-3)
+- IRSA 11종의 **역할키 ↔ ServiceAccount** (§5-3)
 
 **사고 방지 (매 PR 수동 점검을 자동화)**
 - `sqs:PurgeQueue` 권한 금지 — 붙으면 시연 중 큐가 비어 스케일링이 무너집니다. **`sqs:*` 처럼 와일드카드로 포함되는 경우도 잡습니다**
