@@ -98,7 +98,7 @@ check: ## 환경 점검
 check-contract: ## 규약서 이름 계약 검사 (정적: 항상 · 런타임: apply 이후)
 	$(call REQUIRE_DIR,$(INFRA_DIR))
 	@chmod +x scripts/check_contract.sh
-	@INFRA_DIR="$(INFRA_DIR)" ./scripts/check_contract.sh
+	@INFRA_DIR="$(INFRA_DIR)" APP_DIR="$(APP_DIR)" MANIFESTS_DIR="$(MANIFESTS_DIR)" ./scripts/check_contract.sh
 
 clone-all: ## 세 레포를 형제로 clone (이미 있으면 건너뜀)
 	@for r in infra app manifests; do \
