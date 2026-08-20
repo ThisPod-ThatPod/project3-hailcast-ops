@@ -46,6 +46,8 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
 
 OPS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INFRA_DIR="${INFRA_DIR:-$OPS_ROOT/../project3-hailcast-infra}"
+APP_DIR="${APP_DIR:-$OPS_ROOT/../project3-hailcast-app}"
+MANIFESTS_DIR="${MANIFESTS_DIR:-$OPS_ROOT/../project3-hailcast-manifests}"
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
@@ -416,6 +418,33 @@ if [ -n "$DESC_MISS" ]; then
     echo "$DESC_MISS" | sed "s|$INFRA_DIR/|      |"
 else
     ok "SG·IAM 정책에 description 이 모두 채워져 있다"
+fi
+
+# ── 1-9. predict 상한 ↔ KEDA 상한 대조 (§8-1) ──
+# 두 값이 서로 다른 레포(app·manifests)에 있어 지금까지 교차 검증되지 않았다(규약서 §8-1
+# 명시). predict 의 scaling_max_replicas 가 KEDA 의 maxReplicaCount 보다 작아야 한다 —
+# 같거나 크면 KEDA 쪽 상한이 predict 의 스케일 요청을 실제로 자르는 지점이 된다.
+#
+# ⚠️ 코드 기본값만 본다. manifests 가 SCALING_MAX_REPLICAS 를 env 로 override 하면
+#    이 검사는 그 값을 못 본다(2026-08-20 현재 override 없음 — apps/predict/ 에 없음).
+if [ ! -d "$APP_DIR" ] || [ ! -d "$MANIFESTS_DIR" ]; then
+    skip "app 또는 manifests 레포 없음 ($APP_DIR / $MANIFESTS_DIR). predict↔KEDA 상한 대조를 건너뛴다 → make clone-all"
+else
+    PREDICT_MAX=$(sed 's/#.*$//' "$APP_DIR/backend/predict/config.py" 2>/dev/null \
+        | grep -oE 'scaling_max_replicas[[:space:]]*:[[:space:]]*int[[:space:]]*=[[:space:]]*[0-9]+' \
+        | grep -oE '[0-9]+$' | head -1)
+    KEDA_MAX=$(sed 's/#.*$//' "$MANIFESTS_DIR/apps/worker/scaledobject.yaml" 2>/dev/null \
+        | grep -oE 'maxReplicaCount:[[:space:]]*[0-9]+' \
+        | grep -oE '[0-9]+$' | head -1)
+    if [ -z "$PREDICT_MAX" ]; then
+        fail "app backend/predict/config.py 에서 scaling_max_replicas 값을 못 읽었다(§8-1)"
+    elif [ -z "$KEDA_MAX" ]; then
+        fail "manifests apps/worker/scaledobject.yaml 에서 maxReplicaCount 값을 못 읽었다(§8-1)"
+    elif [ "$PREDICT_MAX" -ge "$KEDA_MAX" ]; then
+        fail "predict scaling_max_replicas($PREDICT_MAX) 가 KEDA maxReplicaCount($KEDA_MAX) 보다 작지 않다(§8-1). KEDA 가 predict 의 스케일 요청을 자를 수 있다"
+    else
+        ok "predict scaling_max_replicas($PREDICT_MAX) < KEDA maxReplicaCount($KEDA_MAX) (§8-1)"
+    fi
 fi
 
 # =============================================================
