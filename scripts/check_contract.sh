@@ -107,6 +107,7 @@ IRSA_CONTRACT=(
 ALLOWED_WILDCARD_SIDS=(
   "modules/cicd/main.tf|EcrAuth"                       # ecr:GetAuthorizationToken 은 리소스 지정이 불가능한 계정 단위 액션이다(AWS 사양)
   "modules/cicd/gha_tf.tf|TerraformManagedServices"    # #38 terraform apply 역할. 광역이 의도된 것 — 신뢰정책이 infra-apply environment·dev 브랜치·워크플로 파일로 잠갔다(규약서 §5-6). IAM 이 아니라 신뢰정책이 방어선
+  "modules/eks/irsa.tf|ReadSpotPriceHistory"           # #92 opencost. ec2:DescribeSpotPriceHistory 는 AWS 문서상 리소스 수준 권한 미지원이라 Resource="*" 불가피. 조회 전용이고 ec2:Region 조건으로 좁혔다(규약서 §5-3)
 )
 
 # 액션 와일드카드 금지 목록. sqs:* 는 sqs:PurgeQueue 를 '포함' 한다.
