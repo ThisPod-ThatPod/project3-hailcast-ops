@@ -80,9 +80,9 @@ RDS_SG_NAME="${NAME_PREFIX}-sg-rds"            # 규약서 §5-5
 #   서브넷 발견은 kubernetes.io/role/elb · internal-elb 가 담당하고 그건 아래에서 검사한다.
 #   → 규약서 §6-1 에서 이 항목을 빼는 개정을 함께 올린다(짝 PR).
 
-# IRSA 11종 - '역할키|네임스페이스:SA이름' (규약서 §5-3)
+# IRSA 12종 - '역할키|네임스페이스:SA이름' (규약서 §5-3)
 # 역할명은 hailcast-dev-irsa-<역할키> 로 만들어진다.
-# forecast 는 폐기됐다(2026-07-13 · predict 내장). weather-cron·simulator·eso·opencost 를 더해 11종이다.
+# forecast 는 폐기됐다(2026-07-13 · predict 내장). weather-cron·simulator·eso·opencost·retraining 을 더해 12종이다.
 IRSA_BASE_KEYS=(lbctrl monitoring)             # enable_app_irsa 와 무관하게 항상 만들어진다
 IRSA_CONTRACT=(
   "lbctrl|kube-system:aws-load-balancer-controller"
@@ -96,6 +96,7 @@ IRSA_CONTRACT=(
   "simulator|hailcast:simulator-sa"
   "eso|external-secrets:external-secrets"
   "opencost|opencost:opencost"
+  "retraining|hailcast:retraining-sa"
 )
 
 # 정당한 와일드카드의 예외 목록. 형식은 "파일경로|sid" 다.
@@ -322,7 +323,7 @@ else
     fail "RDS 5432 규칙이 SG 를 지목하지 않는다(§5-5)"
 fi
 
-# ── 1-5. IRSA 11종의 역할키 ↔ ServiceAccount 계약 (§5-3) ──
+# ── 1-5. IRSA 12종의 역할키 ↔ ServiceAccount 계약 (§5-3) ──
 # 이 문자열이 manifests 의 serviceaccount.yaml 과 맺는 계약이다.
 # IRSA 신뢰정책이 system:serviceaccount:<ns>:<sa> 로 못을 박으므로, 파드가 다른 SA 로 뜨면
 # AssumeRole 이 거부돼 '권한 없음' 이 된다. 로그만 보면 IAM 정책 문제로 착각하게 된다.
