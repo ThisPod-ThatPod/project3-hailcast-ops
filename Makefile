@@ -34,7 +34,7 @@ ORG_URL := https://github.com/ThisPod-ThatPod
 
 .PHONY: help setup check check-contract clone-all kubeconfig guard-account \
         infra-init infra-fmt infra-plan infra-apply infra-destroy \
-        app-build-push install-argocd deploy destroy-all destroy-all-yes
+        app-build-push install-argocd deploy bootstrap-all destroy-all destroy-all-yes
 
 help: ## 명령 목록
 	@echo ""
@@ -62,6 +62,7 @@ help: ## 명령 목록
 	@echo "  make app-build-push  docker build·push (ECR)"
 	@echo "  make install-argocd  Argo CD 최초 설치 (재구축 시 deploy 선행조건)"
 	@echo "  make deploy          manifests helm/argocd 배포"
+	@echo "  make bootstrap-all   ArgoCD 설치 + ESO CRD + rds-secret force-sync 일괄 실행"
 	@echo ""
 	@echo "  [ 정리 ]"
 	@echo "  make destroy-all     manifest→infra→app 순 전체 정리(단계별 확인)"
@@ -132,6 +133,7 @@ infra-destroy: guard-account ; $(call REQUIRE_DIR,$(INFRA_DIR)) ; make -C $(INFR
 app-build-push: guard-account ; $(call REQUIRE_DIR,$(APP_DIR))       ; make -C $(APP_DIR) build-push
 install-argocd: guard-account ; $(call REQUIRE_DIR,$(MANIFESTS_DIR)) ; make -C $(MANIFESTS_DIR) install-argocd
 deploy:         guard-account ; $(call REQUIRE_DIR,$(MANIFESTS_DIR)) ; make -C $(MANIFESTS_DIR) deploy
+bootstrap-all:  guard-account ; $(call REQUIRE_DIR,$(MANIFESTS_DIR)) ; make -C $(MANIFESTS_DIR) bootstrap-all
 
 # ── 정리 : teardown 지휘 스크립트에 위임 (manifest→infra→app 순서·안전 통제) ──
 destroy-all: ## 전체 정리 (manifest→infra→app 순 · 단계별 확인)
