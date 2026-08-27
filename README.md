@@ -20,7 +20,9 @@ proj-mgmt(운영 콘솔) 환경 세팅과, 세 레포(infra·app·manifests)를 
 └── project3-hailcast-ops         ★이 레포 (팀장 소유 · 운영 도구)
     ├── Makefile                        # 최상위 오케스트레이터 (make -C 위임)
     ├── README.md
-    ├── teardown_체크리스트.md           # 전체 정리 절차(사람 확인용)
+    ├── docs/
+    │   ├── teardown_체크리스트.md       # 전체 정리 절차(사람 확인용)
+    │   └── 재구축_체크리스트.md
     └── scripts/
         ├── setup.sh                    # proj-mgmt 도구 설치 + 자격 + kubeconfig
         ├── check.sh                    # 환경·EKS 연결 점검
@@ -62,7 +64,7 @@ make check
   - AWS: `aws configure` → `~/.aws` (프로젝트 계정)
   - Docker Hub: `.dockerhub_token`(chmod 600, git 밖) (팀 공용 계정 **hailscale**)
 - `.gitignore`가 `.env` · `.dockerhub_token` · `.docker_config/` · `*.csv` · `.terraform/` · `*.tfstate*`를 제외합니다.
-- EKS 권한: **클러스터 생성자만** 자동 admin(`bootstrap_cluster_creator_admin_permissions=true`). 그 외 사람은 infra의 **Access Entry**로 등재해야 `kubectl`이 됩니다(규약서 §5-3).
+- EKS 권한: **클러스터 생성자만** 자동 admin(`bootstrap_cluster_creator_admin_permissions=true`). 그 외 사람은 infra의 **Access Entry**로 등재해야 `kubectl`이 됩니다(규약서 §5-6).
 
 ### ⚠️ 먼저 `.env` 를 만드십시오
 
@@ -86,7 +88,7 @@ cp .env.example .env      # PROJECT_ACCOUNT_ID 를 채웁니다 (값은 팀 채�
 
 | 어디서 | 계정이 프로젝트 계정이 아니면 |
 |---|---|
-| `make setup` | **즉시 중단** |
+| `make setup` | **자동으로 `[hailcast]` 프로필을 만들거나 전환해 계정을 맞춥니다.** 환경변수 자격증명이 잡혀 있거나 비대화형 셸이거나 전환 후에도 계정이 안 맞으면 그때 중단합니다 |
 | `make check` | ❌ 빨간불 + 마지막에 **`exit 1`** (나머지 점검은 마저 보여줌) |
 | `make infra-init` · `plan` · `apply` · `destroy` | **즉시 중단** (`guard-account` 선행) |
 | `make kubeconfig` · `app-build-push` · `deploy` | **즉시 중단** (`guard-account` 선행) |
@@ -171,11 +173,11 @@ ops 는 **배포 대상이 아니라 운영 도구**이고 사실상 팀장 단�
 - **CODEOWNERS 는 PR 의 base 브랜치(`main`)에 있어야 동작합니다.** 이 파일을 추가하는 PR 자체에는 리뷰 요청이 안 뜹니다. **머지된 뒤부터** 유효합니다.
 - **GitHub 은 PR 작성자 본인에게는 리뷰 요청을 보내지 않습니다.** 이미선이 직접 여는 PR 에는 안 뜹니다. **실효 대상은 팀장이 여는 teardown PR** 입니다.
 
-> ⚠️ 한글 경로(`teardown_체크리스트.md`)는 문법 검증은 통과했지만 공식 문서가 non-ASCII 매칭을 보증하지 않습니다. **머지 후 한 번 실증**이 필요합니다.
+> ⚠️ 한글 경로(`docs/teardown_체크리스트.md`)는 문법 검증은 통과했지만 공식 문서가 non-ASCII 매칭을 보증하지 않습니다. **머지 후 한 번 실증**이 필요합니다.
 
 **왜 teardown 만 거는가.** ops 는 팀원 전원 서버에서 실행되고 **AWS 를 통째로 지웁니다.** 실행 반경이 다른 레포보다 큽니다. 전체를 승인 필수로 만들면 속도가 죽으니 **삭제를 수행하는 파일에만** 리뷰를 겁니다.
 
-**대상:** `scripts/teardown.sh` · `teardown_체크리스트.md` · `scripts/_lib.sh` · `scripts/guard_account.sh` (계정 가드)
+**대상:** `scripts/teardown.sh` · `docs/teardown_체크리스트.md` · `scripts/_lib.sh` · `scripts/guard_account.sh` (계정 가드)
 
 ---
 
@@ -188,7 +190,7 @@ ops 는 **배포 대상이 아니라 운영 도구**이고 사실상 팀장 단�
 | `make check-contract` | **규약서 이름 계약 검사** (정적: 항상 · 런타임: apply 이후) |
 | `make clone-all` | 세 레포 형제 clone |
 | `make kubeconfig` | EKS kubeconfig 갱신(apply 후) |
-| `make infra-plan` / `infra-apply` / `infra-destroy` | infra 레포 위임 |
+| `make infra-init` / `infra-fmt` / `infra-plan` / `infra-apply` / `infra-destroy` | infra 레포 위임 |
 | `make app-build-push` | app 레포 위임(ECR push) |
 | `make install-argocd` | manifests 레포 위임 — Argo CD 최초 설치(재구축 시 `deploy` 선행조건) |
 | `make deploy` | manifests 레포 위임(helm/argocd) |
@@ -216,7 +218,7 @@ ops 는 **배포 대상이 아니라 운영 도구**이고 사실상 팀장 단�
 | **런타임** | `aws describe` 로 **실물** | 필요 | apply 이후(없으면 건너뜀) |
 
 **둘은 다른 질문에 답합니다.** 정적은 "코드에 그렇게 써 있나", 런타임은 "실제로 그렇게 만들어졌나".
-IRSA 가 코드엔 11종 선언돼 있어도 `enable_app_irsa` 가 꺼져 있으면 실물은 2종(`lbctrl`·`monitoring`)입니다. 그 차이가 런타임 단계에서 드러납니다.
+IRSA 가 코드엔 12종 선언돼 있어도 `enable_app_irsa` 가 꺼져 있으면 실물은 2종(`lbctrl`·`monitoring`)입니다. 그 차이가 런타임 단계에서 드러납니다.
 
 ### 검사 항목
 
@@ -224,12 +226,13 @@ IRSA 가 코드엔 11종 선언돼 있어도 `enable_app_irsa` 가 꺼져 있으
 - 프라이빗 서브넷·**노드 SG** 의 `karpenter.sh/discovery` 태그 · **값이 `hailcast-dev` 인가** (§6-1)
 - `kubernetes.io/role/elb` · `internal-elb` (§6-1)
 - RDS 5432 인바운드가 **SG 참조**인가 (CIDR 아님 · §5-5)
-- IRSA 11종의 **역할키 ↔ ServiceAccount** (§5-3)
+- IRSA 12종의 **역할키 ↔ ServiceAccount** (§5-3)
 
 **사고 방지 (매 PR 수동 점검을 자동화)**
 - `sqs:PurgeQueue` 권한 금지 — 붙으면 시연 중 큐가 비어 스케일링이 무너집니다. **`sqs:*` 처럼 와일드카드로 포함되는 경우도 잡습니다**
 - 검토되지 않은 와일드카드(`Resource: "*"` · `actions = ["*"]`) — **upstream 벤더링 정책은 제외**합니다. 원본에 `*` 가 정상적으로 들어 있어 같이 세면 매일 거짓 경보가 뜹니다
 - SG·IAM 정책의 `description` 누락 — **나중에 못 고칩니다.** 바꾸면 리소스가 재생성됩니다
+- predict `scaling_max_replicas` ↔ KEDA `maxReplicaCount` 상한 대조 (§8-1) — predict 쪽이 더 크거나 같으면 KEDA 가 predict 의 스케일 요청을 자를 수 있습니다
 
 ### 어떻게 검사하나 — 줄이 아니라 '블록', 문자열이 아니라 '값'
 
@@ -253,7 +256,7 @@ IRSA 가 코드엔 11종 선언돼 있어도 `enable_app_irsa` 가 꺼져 있으
 
 ### 알려진 한계 (확인한 것만 적습니다)
 
-- **CI 에서는 런타임 검사가 통째로 건너뛰어집니다.** `_lib.sh` 가 `AWS_PROFILE=hailcast` 를 강제하는데 GitHub Actions OIDC 는 자격증명을 환경변수로 줍니다. 프로필이 없으니 계정 대조가 실패하고 정적 검사만 돌면서 **초록으로 끝납니다.** CI 에 붙일 때 그 부분을 함께 손봐야 합니다.
+- **CI 에서는 `PROJECT_ACCOUNT_ID` 를 GitHub Secret 으로 주입해야 런타임 검사가 돕니다.** 안 주면 `_lib.sh` 가 즉시 중단시킵니다(조용히 건너뛰지 않습니다). 옛 `_lib.sh` 는 `AWS_PROFILE=hailcast` 를 강제해서 CI(OIDC 환경변수)에서 프로필을 못 찾아 런타임 검사가 조용히 건너뛰어졌지만, 그 강제는 제거됐습니다.
 - **문자열 안에 `#` 나 중괄호가 든 HCL** 은 오파싱될 수 있습니다. 현재 코드엔 없습니다.
 
 > ⚠️ 검사 대상은 **여러분 로컬의 `../project3-hailcast-infra` 작업트리**입니다.
@@ -271,7 +274,7 @@ make destroy-all          # ① manifest(K8s·ALB) → ② infra(terraform destr
 
 - **삭제 본체는 각 레포**가 소유합니다: `manifests|infra|app/scripts/teardown_*.sh` (그 레포에서 `make teardown`으로 단독 실행도 가능).
 - **ops의 `teardown.sh`가 지휘**만 합니다 — 단계별 y/N 확인, 한 단계 실패 시 다음으로 자동 진행하지 않음.
-- **시작 전 반드시 `teardown_체크리스트.md`** 를 확인하세요(RDS/S3 데이터는 destroy 시 사라짐 · 스냅샷 · Budgets · 사후 잔여 리소스 ENI·EIP·ALB).
+- **시작 전 반드시 `docs/teardown_체크리스트.md`** 를 확인하세요(RDS/S3 데이터는 destroy 시 사라짐 · 스냅샷 · Budgets · 사후 잔여 리소스 ENI·EIP·ALB).
 - ⚠️ manifest를 먼저 안 지우면 살아있는 ALB·ENI가 VPC destroy를 막습니다 — 그래서 manifest가 1순위입니다.
 
 ### ⚠️ 실제 삭제로 동작이 바뀌었습니다
