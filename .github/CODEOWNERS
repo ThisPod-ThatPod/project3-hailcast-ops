@@ -39,7 +39,7 @@
 /scripts/teardown.sh          @mshjgr
 
 # 사람이 눈으로 확인하는 절차서 (스냅샷·Budgets·잔여 리소스)
-/teardown_체크리스트.md        @mshjgr
+/docs/teardown_체크리스트.md   @mshjgr
 
 # 계정 가드 — 잘못된 계정으로 destroy 가 돌면 되돌릴 방법이 없다
 /scripts/_lib.sh              @mshjgr
